@@ -1,0 +1,495 @@
+// Renders customer receivable statement PDFs for unpaid sales.
+import { createRequire } from "module"
+import path from "node:path"
+import type * as Fs from "node:fs"
+import { PDF_COLORS } from "@/lib/pdf/pdf-theme"
+import { formatCurrency } from "@/lib/utils/format"
+
+const require = createRequire(import.meta.url)
+const {
+  existsSync,
+  readFileSync,
+}: {
+  existsSync: typeof Fs.existsSync
+  readFileSync: typeof Fs.readFileSync
+} = require("node:fs")
+const PDFKitModule = require("pdfkit") as
+  | typeof import("pdfkit").default
+  | {
+      default?: typeof import("pdfkit").default
+      PDFDocument?: typeof import("pdfkit").default
+    }
+const PDFDocument =
+  typeof PDFKitModule === "function"
+    ? PDFKitModule
+    : PDFKitModule.default ?? PDFKitModule.PDFDocument
+
+type OutstandingSaleRow = {
+  saleDate?: Date | string
+  paymentDate?: Date | string
+  items: string
+  pricePerUnit: number | null
+  recordedBy: string
+  amount: number
+}
+
+type LoanPaymentRow = {
+  paidAt?: Date | string
+  amount: number
+  paymentMethod: "cash" | "bank" | "mobile"
+  notes?: string
+}
+
+type OutstandingPdfPayload = {
+  statementNumber: string
+  generatedAt?: Date | string
+  customerName: string
+  customerPhone?: string
+  totalLoanAmount: number
+  totalPaid: number
+  totalOutstanding: number
+  rows: OutstandingSaleRow[]
+  payments?: LoanPaymentRow[]
+}
+
+type StoreInfo = {
+  name?: string
+  address?: string
+  tin?: string
+  phone?: string
+  email?: string
+  bprBankAccounts?: string
+  momo?: string
+}
+
+type OutstandingPdfDocument = {
+  rect(x: number, y: number, width: number, height: number): OutstandingPdfDocument
+  fillColor(color: string): OutstandingPdfDocument
+  fill(): OutstandingPdfDocument
+  image(
+    src: string | Buffer,
+    x?: number,
+    y?: number,
+    options?: { width?: number; height?: number; fit?: [number, number] }
+  ): OutstandingPdfDocument
+  font(name: string): OutstandingPdfDocument
+  fontSize(size: number): OutstandingPdfDocument
+  text(
+    text: string,
+    x?: number,
+    y?: number,
+    options?: { align?: "left" | "right" | "center"; width?: number }
+  ): OutstandingPdfDocument
+  lineTo(x: number, y: number): OutstandingPdfDocument
+  moveTo(x: number, y: number): OutstandingPdfDocument
+  lineWidth(width: number): OutstandingPdfDocument
+  strokeColor(color: string): OutstandingPdfDocument
+  stroke(): OutstandingPdfDocument
+  addPage(): OutstandingPdfDocument
+  heightOfString(text: string, options?: { width?: number }): number
+  widthOfString(text: string): number
+  on(event: "data", listener: (chunk: Buffer) => void): OutstandingPdfDocument
+  on(event: "end", listener: () => void): OutstandingPdfDocument
+  on(event: "error", listener: (error: unknown) => void): OutstandingPdfDocument
+  end(): void
+}
+
+const logoPath = path.join(process.cwd(), "public", "images", "logo.png")
+const stampPath = path.join(process.cwd(), "public", "images", "stamp.jpg")
+const logoBox = {
+  x: 42,
+  y: 24,
+  width: 120,
+  height: 120,
+  imageX: 48,
+  imageY: 30,
+  imageFit: [108, 108] as [number, number],
+}
+
+const stampBox = {
+  x: 438,
+  width: 78,
+  height: 78,
+  fit: [78, 78] as [number, number],
+}
+
+const TABLE_ROW_HEIGHT = 24
+const PAYMENT_DETAILS_WIDTH = 360
+const THANK_YOU_LINE = "Thank you for doing business with us."
+
+function mutedText(doc: OutstandingPdfDocument) {
+  return doc.font("Helvetica-Bold").fillColor(PDF_COLORS.mutedText)
+}
+
+function boldText(doc: OutstandingPdfDocument) {
+  return doc.font("Helvetica-Bold").fillColor(PDF_COLORS.text)
+}
+
+function getLogoBuffer() {
+  if (!existsSync(logoPath)) return null
+  return readFileSync(logoPath)
+}
+
+function getStampBuffer() {
+  if (!existsSync(stampPath)) return null
+  return readFileSync(stampPath)
+}
+
+function drawLogo(doc: OutstandingPdfDocument, storeInfo: StoreInfo) {
+  doc
+    .rect(logoBox.x, logoBox.y, logoBox.width, logoBox.height)
+    .fillColor(PDF_COLORS.surface)
+    .fill()
+
+  const logoBuffer = getLogoBuffer()
+  try {
+    if (!logoBuffer) throw new Error("Logo not found")
+    doc.image(logoBuffer, logoBox.imageX, logoBox.imageY, {
+      fit: logoBox.imageFit,
+    })
+    return
+  } catch (bufferError) {
+    try {
+      doc.image(logoPath, logoBox.imageX, logoBox.imageY, {
+        fit: logoBox.imageFit,
+      })
+      return
+    } catch (pathError) {
+      console.error("[Outstanding PDF Logo Error]", {
+        buffer:
+          bufferError instanceof Error
+            ? bufferError.message
+            : "Failed to load logo buffer",
+        path:
+          pathError instanceof Error
+            ? pathError.message
+            : "Failed to load logo path",
+        logoPath,
+      })
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(16)
+        .fillColor(PDF_COLORS.headerText)
+        .text(storeInfo.name ?? "Inventory", 48, 72, { width: 150 })
+    }
+  }
+}
+
+function drawStamp(doc: OutstandingPdfDocument, y: number) {
+  const stampBuffer = getStampBuffer()
+  const stampY = y + 34
+
+  try {
+    if (!stampBuffer) throw new Error("Stamp not found")
+    doc.image(stampBuffer, stampBox.x, stampY, { fit: stampBox.fit })
+  } catch (bufferError) {
+    try {
+      doc.image(stampPath, stampBox.x, stampY, { fit: stampBox.fit })
+    } catch (pathError) {
+      console.error("[Outstanding PDF Stamp Error]", {
+        buffer:
+          bufferError instanceof Error
+            ? bufferError.message
+            : "Failed to load stamp buffer",
+        path:
+          pathError instanceof Error
+            ? pathError.message
+            : "Failed to load stamp path",
+        stampPath,
+      })
+    }
+  }
+}
+
+function formatDate(value: Date | string | undefined) {
+  if (!value) return "-"
+  return new Intl.DateTimeFormat("en-RW", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  }).format(new Date(value))
+}
+
+function formatPaymentMethod(value: LoanPaymentRow["paymentMethod"]) {
+  if (value === "mobile") return "Mobile Money"
+  return value.charAt(0).toUpperCase() + value.slice(1)
+}
+
+function truncateToWidth(
+  doc: OutstandingPdfDocument,
+  value: string | undefined,
+  width: number
+) {
+  const text = value?.trim() || "-"
+  if (doc.widthOfString(text) <= width) return text
+
+  const suffix = "..."
+  const suffixWidth = doc.widthOfString(suffix)
+  let start = 0
+  let end = text.length
+
+  while (start < end) {
+    const mid = Math.ceil((start + end) / 2)
+    if (doc.widthOfString(text.slice(0, mid)) + suffixWidth <= width) {
+      start = mid
+    } else {
+      end = mid - 1
+    }
+  }
+
+  return `${text.slice(0, start).trimEnd()}${suffix}`
+}
+
+function getPaymentDetailsLines(storeInfo: StoreInfo) {
+  return [
+    `BPR Bank Accounts: ${storeInfo.bprBankAccounts ?? "-"}`,
+    `MoMo: ${storeInfo.momo ?? "-"}`,
+  ].filter((line) => line.length > 0)
+}
+
+export function generateOutstandingCustomerPDF(
+  payload: OutstandingPdfPayload,
+  storeInfo: StoreInfo
+) {
+  if (!PDFDocument) {
+    const keys =
+      typeof PDFKitModule === "object" && PDFKitModule !== null
+        ? Object.keys(PDFKitModule).join(", ")
+        : typeof PDFKitModule
+    throw new Error(`Unable to load pdfkit constructor. Exports: ${keys}`)
+  }
+
+  const doc = new PDFDocument({ margin: 48, size: "A4" }) as unknown as OutstandingPdfDocument
+  const chunks: Buffer[] = []
+
+  doc.on("data", (chunk: Buffer) => chunks.push(chunk))
+
+  const done = new Promise<Buffer>((resolve, reject) => {
+    doc.on("end", () => resolve(Buffer.concat(chunks)))
+    doc.on("error", reject)
+  })
+
+  drawLogo(doc, storeInfo)
+
+  // Compute a safe header bottom so subsequent content doesn't overlap
+  // with the title/logo area. Use font metrics to measure text heights.
+  const titleFont = "Helvetica-Bold"
+  const bodyFont = "Helvetica"
+  doc.font(titleFont).fontSize(22)
+  const titleHeight = doc.heightOfString("Loan Statement", { width: 200 })
+  doc.font(bodyFont).fontSize(10)
+  const stmtHeight = doc.heightOfString(String(payload.statementNumber ?? ""), { width: 200 })
+  const dateHeight = doc.heightOfString(`Date: ${formatDate(payload.generatedAt)}`, { width: 200 })
+
+  // Compute header bottom using the actual title position and measured heights
+  const titleY = logoBox.y + 12
+  const stmtY = titleY + titleHeight + 6
+  const dateY = stmtY + stmtHeight
+  const headerBottom = Math.max(logoBox.y + logoBox.height, dateY + dateHeight)
+
+  const separatorY = Math.ceil(headerBottom + 16)
+
+  // Draw title and statement on the right side within the computed header area
+  const titleX = 340
+  boldText(doc).fontSize(22).text("Loan Statement", titleX, titleY, { align: "right" })
+  mutedText(doc)
+    .fontSize(10)
+    .text(payload.statementNumber, titleX, stmtY, { align: "right" })
+    .text(`Date: ${formatDate(payload.generatedAt)}`, titleX, dateY, {
+      align: "right",
+    })
+
+  doc.moveTo(48, separatorY).lineTo(547, separatorY).lineWidth(1.5).strokeColor(PDF_COLORS.accent).stroke()
+
+  const contentStart = separatorY + 20
+
+  boldText(doc)
+    .fontSize(11)
+    .text(storeInfo.name ?? "BIRW INVESTMENT GROUP Ltd", 48, contentStart)
+  mutedText(doc)
+    .fontSize(9)
+    .text(storeInfo.address ?? "", 48, contentStart + 18)
+    .text(storeInfo.phone ?? "", 48, contentStart + 32)
+    .text(storeInfo.email ?? "", 48, contentStart + 46)
+    .text(storeInfo.tin ? `TIN: ${storeInfo.tin}` : "", 48, contentStart + 60)
+
+  boldText(doc).fontSize(11).text("Customer", 330, contentStart)
+  mutedText(doc)
+    .fontSize(9)
+    .text(payload.customerName, 330, contentStart + 18)
+    .text(payload.customerPhone ?? "", 330, contentStart + 32)
+
+  const tableTop = contentStart + 90
+  const columns = {
+    no: 54,
+    saleDate: 82,
+    paymentDate: 144,
+    items: 202,
+    recordedBy: 318,
+    pricePerUnit: 394,
+    amount: 476,
+  }
+
+  doc
+    .rect(48, tableTop, 499, 24)
+    .fillColor(PDF_COLORS.tableHeader)
+    .fill()
+    .font("Helvetica-Bold")
+    .fillColor(PDF_COLORS.sectionText)
+    .fontSize(9)
+    .text("NO", columns.no, tableTop + 8, { width: 24 })
+    .text("SALE DATE", columns.saleDate, tableTop + 8, { width: 58 })
+    .text("PAYMENT", columns.paymentDate, tableTop + 8, { width: 58 })
+    .text("ITEM DESCRIPTION", columns.items, tableTop + 8, { width: 112 })
+    .text("RECORDED", columns.recordedBy, tableTop + 8, { width: 70 })
+    .text("PRICE / UNIT", columns.pricePerUnit, tableTop + 8, { width: 68 })
+    .text("AMOUNT", columns.amount, tableTop + 8, { width: 60 })
+
+  let y = tableTop + 32
+
+  payload.rows.forEach((row, index) => {
+    const costText = row.pricePerUnit === null ? "-" : formatCurrency(row.pricePerUnit)
+
+    if (y + TABLE_ROW_HEIGHT > 700) {
+      doc.addPage()
+      y = 56
+    }
+
+    doc.font("Helvetica-Bold").fontSize(7)
+    const saleDate = truncateToWidth(doc, formatDate(row.saleDate), 58)
+    const paymentDate = truncateToWidth(doc, formatDate(row.paymentDate), 58)
+    const items = truncateToWidth(doc, row.items, 112)
+    const recordedBy = truncateToWidth(doc, row.recordedBy, 70)
+    const pricePerUnit = truncateToWidth(doc, costText, 68)
+    const amount = truncateToWidth(doc, formatCurrency(row.amount), 60)
+
+    doc
+      .fillColor(index % 2 === 0 ? PDF_COLORS.surface : PDF_COLORS.rowAlt)
+      .rect(48, y - 6, 499, TABLE_ROW_HEIGHT)
+      .fill()
+      .font("Helvetica-Bold")
+      .fillColor(PDF_COLORS.text)
+      .fontSize(7)
+      .text(String(index + 1), columns.no, y, { width: 24 })
+      .text(saleDate, columns.saleDate, y, { width: 58 })
+      .text(paymentDate, columns.paymentDate, y, { width: 58 })
+      .text(items, columns.items, y, { width: 112 })
+      .text(recordedBy, columns.recordedBy, y, { width: 70 })
+      .text(pricePerUnit, columns.pricePerUnit, y, { width: 68 })
+      .text(amount, columns.amount, y, { width: 60 })
+
+    y += TABLE_ROW_HEIGHT + 2
+  })
+
+  if (payload.payments?.length) {
+    if (y > 620) {
+      doc.addPage()
+      y = 56
+    }
+
+    y += 12
+    boldText(doc).fontSize(11).text("Payments Received", 48, y)
+    y += 20
+
+    doc
+      .rect(48, y, 499, 24)
+      .fillColor(PDF_COLORS.tableHeader)
+      .fill()
+      .font("Helvetica-Bold")
+      .fillColor(PDF_COLORS.sectionText)
+      .fontSize(9)
+      .text("NO", 54, y + 8, { width: 24 })
+      .text("DATE", 84, y + 8, { width: 76 })
+      .text("METHOD", 166, y + 8, { width: 100 })
+      .text("NOTES", 268, y + 8, { width: 188 })
+      .text("AMOUNT", 478, y + 8, { width: 60 })
+
+    y += 32
+
+    payload.payments.forEach((payment, index) => {
+      if (y + TABLE_ROW_HEIGHT > 700) {
+        doc.addPage()
+        y = 56
+      }
+
+      doc
+        .fillColor(index % 2 === 0 ? PDF_COLORS.surface : PDF_COLORS.rowAlt)
+        .rect(48, y - 6, 499, TABLE_ROW_HEIGHT)
+        .fill()
+        .font("Helvetica-Bold")
+        .fillColor(PDF_COLORS.text)
+        .fontSize(7)
+        .text(String(index + 1), 54, y, { width: 24 })
+        .text(truncateToWidth(doc, formatDate(payment.paidAt), 76), 84, y, {
+          width: 76,
+        })
+        .text(
+          truncateToWidth(doc, formatPaymentMethod(payment.paymentMethod), 100),
+          166,
+          y,
+          { width: 100 }
+        )
+        .text(truncateToWidth(doc, payment.notes, 188), 268, y, {
+          width: 188,
+        })
+        .text(
+          truncateToWidth(doc, formatCurrency(payment.amount), 60),
+          478,
+          y,
+          { width: 60 }
+        )
+
+      y += TABLE_ROW_HEIGHT + 2
+    })
+  }
+
+  if (y > 660) {
+    doc.addPage()
+    y = 56
+  }
+
+  doc
+    .moveTo(48, y)
+    .lineTo(547, y)
+    .strokeColor(PDF_COLORS.border)
+    .stroke()
+    .font("Helvetica-Bold")
+    .fontSize(12)
+    .fillColor(PDF_COLORS.text)
+    .text("Total Loans", 330, y + 16)
+    .text(formatCurrency(payload.totalLoanAmount), 448, y + 16, {
+      width: 90,
+    })
+    .text("Paid", 330, y + 34)
+    .text(formatCurrency(payload.totalPaid), 448, y + 34, {
+      width: 90,
+    })
+    .text("Remaining", 330, y + 52)
+    .text(formatCurrency(payload.totalOutstanding), 448, y + 52, {
+      width: 90,
+    })
+
+  drawStamp(doc, y + 42)
+
+  const paymentBlockY = y + 96
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9)
+    .fillColor(PDF_COLORS.text)
+    .text(getPaymentDetailsLines(storeInfo).join("\n"), 48, paymentBlockY, {
+      width: PAYMENT_DETAILS_WIDTH,
+    })
+
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9)
+    .fillColor(PDF_COLORS.text)
+    .text(THANK_YOU_LINE, 48, paymentBlockY + 26, {
+      align: "center",
+      width: 499,
+    })
+
+  doc.end()
+
+  return done
+}

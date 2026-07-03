@@ -1,0 +1,260 @@
+/* Defines global theme tokens and base styling for the application UI. */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: Arial, Helvetica, sans-serif;
+  --font-mono: Consolas, "Courier New", monospace;
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --background: #f6faf6;
+  --foreground: #102017;
+  --card: #ffffff;
+  --card-foreground: #102017;
+  --popover: #ffffff;
+  --popover-foreground: #102017;
+  --primary: #126a35;
+  --primary-foreground: #ffffff;
+  --secondary: #eaf4ef;
+  --secondary-foreground: #075b78;
+  --muted: #eef6ef;
+  --muted-foreground: #55665b;
+  --accent: #c99a18;
+  --accent-foreground: #102017;
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #d3e3d7;
+  --input: #bfd5c6;
+  --ring: #0b7da6;
+  --chart-1: #126a35;
+  --chart-2: #c99a18;
+  --chart-3: #0b7da6;
+  --chart-4: #56665d;
+  --chart-5: #78a22f;
+  --radius: 0.8rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #102017;
+  --sidebar-primary: #126a35;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef6ef;
+  --sidebar-accent-foreground: #063f20;
+  --sidebar-border: #d3e3d7;
+  --sidebar-ring: #0b7da6;
+}
+
+.dark {
+  --background: #071410;
+  --foreground: #f5faf6;
+  --card: #0d2117;
+  --card-foreground: #f5faf6;
+  --popover: #0d2117;
+  --popover-foreground: #f5faf6;
+  --primary: #d4a62d;
+  --primary-foreground: #071410;
+  --secondary: #123027;
+  --secondary-foreground: #f5faf6;
+  --muted: #123027;
+  --muted-foreground: #b9c9bd;
+  --accent: #d4a62d;
+  --accent-foreground: #071410;
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: #1d3b2b;
+  --input: #284938;
+  --ring: #57aeca;
+  --chart-1: #d4a62d;
+  --chart-2: #57aeca;
+  --chart-3: #78a22f;
+  --chart-4: #b9c9bd;
+  --chart-5: #ffffff;
+  --sidebar: #0d2117;
+  --sidebar-foreground: #f5faf6;
+  --sidebar-primary: #d4a62d;
+  --sidebar-primary-foreground: #071410;
+  --sidebar-accent: #123027;
+  --sidebar-accent-foreground: #f5faf6;
+  --sidebar-border: #1d3b2b;
+  --sidebar-ring: #57aeca;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    background-image: linear-gradient(135deg, color-mix(in srgb, var(--primary) 4%, transparent), transparent 34%),
+      linear-gradient(315deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 36%);
+    background-attachment: fixed;
+  }
+  html {
+    @apply font-sans;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  a[href],
+  summary,
+  input[type="button"]:not(:disabled),
+  input[type="submit"]:not(:disabled),
+  input[type="reset"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  .brand-auth-surface {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    color-scheme: light;
+    --brand-green: #126a35;
+    --brand-green-deep: #063f20;
+    --brand-green-soft: #eaf5ec;
+    --brand-blue: #0b7da6;
+    --brand-blue-deep: #075b78;
+    --brand-gold: #c99a18;
+    --brand-gold-text: #7a5608;
+    --brand-charcoal: #33443a;
+    --background: #f6faf6;
+    --foreground: #102017;
+    --card: #ffffff;
+    --card-foreground: #102017;
+    --primary: var(--brand-green);
+    --primary-foreground: #ffffff;
+    --secondary: #eaf4ef;
+    --secondary-foreground: var(--brand-blue-deep);
+    --muted: #eef6ef;
+    --muted-foreground: #55665b;
+    --accent: var(--brand-gold);
+    --accent-foreground: #102017;
+    --border: #d3e3d7;
+    --input: #bfd5c6;
+    --ring: var(--brand-blue);
+
+    background:
+      linear-gradient(115deg, transparent 0 58%, color-mix(in srgb, var(--brand-green) 7%, transparent) 58% 74%, transparent 74%),
+      linear-gradient(155deg, color-mix(in srgb, var(--brand-gold) 9%, transparent) 0 16%, transparent 16%),
+      linear-gradient(90deg, color-mix(in srgb, var(--brand-green-deep) 5%, transparent) 1px, transparent 1px),
+      linear-gradient(color-mix(in srgb, var(--brand-blue) 5%, transparent) 1px, transparent 1px),
+      linear-gradient(135deg, #ffffff 0%, #f8fbf6 42%, #edf6ef 100%);
+    background-size: auto, auto, 36px 36px, 36px 36px, auto;
+    color: var(--foreground);
+  }
+
+  .brand-auth-surface::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      repeating-linear-gradient(
+        135deg,
+        transparent 0 112px,
+        color-mix(in srgb, var(--brand-gold) 14%, transparent) 112px 114px,
+        transparent 114px 228px
+      ),
+      linear-gradient(
+        90deg,
+        color-mix(in srgb, var(--brand-green) 9%, transparent),
+        transparent 28% 72%,
+        color-mix(in srgb, var(--brand-blue) 8%, transparent)
+      );
+    opacity: 0.36;
+  }
+
+  .brand-auth-surface::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 0;
+    z-index: -1;
+    height: 7rem;
+    pointer-events: none;
+    background:
+      linear-gradient(90deg, color-mix(in srgb, var(--brand-gold) 82%, transparent) 0 8rem, transparent 8rem),
+      linear-gradient(90deg, transparent 0 10rem, color-mix(in srgb, var(--brand-green) 12%, transparent) 10rem 100%);
+    opacity: 0.18;
+  }
+
+  .brand-auth-surface > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .brand-auth-surface .text-muted-foreground {
+    color: var(--brand-charcoal) !important;
+  }
+
+  .brand-auth-surface [data-slot="input"] {
+    color: var(--foreground) !important;
+    caret-color: var(--foreground);
+    background-color: color-mix(in srgb, var(--card) 88%, transparent);
+    color-scheme: light;
+  }
+
+  .brand-auth-surface [data-slot="input"]::placeholder {
+    color: var(--muted-foreground) !important;
+  }
+
+  .brand-auth-surface [data-slot="input"]:-webkit-autofill {
+    -webkit-text-fill-color: var(--foreground);
+    box-shadow: 0 0 0px 1000px color-mix(in srgb, var(--card) 92%, transparent) inset;
+    transition: background-color 5000s ease-in-out 0s;
+  }
+
+  .brand-auth-surface input[type="password"]::-ms-reveal,
+  .brand-auth-surface input[type="password"]::-ms-clear {
+    filter: none;
+  }
+
+  .brand-auth-surface input[type="password"]::-webkit-credentials-auto-fill-button {
+    filter: none;
+  }
+
+  .brand-auth-surface input[type="password"]::-webkit-textfield-decoration-container {
+    filter: none;
+    opacity: 0.85;
+  }
+}
