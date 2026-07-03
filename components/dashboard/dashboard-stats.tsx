@@ -9,6 +9,7 @@ import {
   Package,
   PackageSearch,
   ReceiptText,
+  Tags,
   TrendingUp,
   Warehouse,
   Wallet,
@@ -37,6 +38,7 @@ type StatsResponse = {
   revenue: number
   salesToday: number
   stockValue: number
+  inventoryValue: number
   revenueToday: number
   costOfSalesToday: number
   loansToday: number
@@ -102,11 +104,18 @@ export function DashboardStats({ store }: DashboardStatsProps) {
       iconClassName: "text-lime-700",
     },
     {
-      label: "Total Stock Value",
+      label: "Inventory Cost",
       value: formatCurrency(stats.stockValue),
       icon: Warehouse,
       className: "border-indigo-200 bg-indigo-50 text-indigo-950",
       iconClassName: "text-indigo-700",
+    },
+    {
+      label: "Inventory Value",
+      value: formatCurrency(stats.inventoryValue),
+      icon: Tags,
+      className: "border-cyan-200 bg-cyan-50 text-cyan-950",
+      iconClassName: "text-cyan-700",
     },
     {
       label: "Sales Today",

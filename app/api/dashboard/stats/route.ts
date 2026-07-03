@@ -186,7 +186,9 @@ export async function GET(request: NextRequest) {
       },
     ])
 
-    const stockValue = await Product.aggregate<DashboardMoneyTotal>([
+    const stockValue = await Product.aggregate<
+      DashboardMoneyTotal & { retail: number }
+    >([
       { $match: { store } },
       {
         $group: {
@@ -196,6 +198,14 @@ export async function GET(request: NextRequest) {
               $multiply: [
                 { $ifNull: ["$quantity", 0] },
                 { $ifNull: ["$costPrice", 0] },
+              ],
+            },
+          },
+          retail: {
+            $sum: {
+              $multiply: [
+                { $ifNull: ["$quantity", 0] },
+                { $ifNull: ["$price", 0] },
               ],
             },
           },
@@ -393,6 +403,7 @@ export async function GET(request: NextRequest) {
         invoiceCount,
         unpaidCount,
         stockValue: stockValue[0]?.total || 0,
+        inventoryValue: stockValue[0]?.retail || 0,
         revenue: (sales[0]?.total || 0) - returnedRevenue,
         revenueToday,
         costOfSalesToday,

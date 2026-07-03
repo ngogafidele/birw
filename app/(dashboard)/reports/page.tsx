@@ -594,7 +594,7 @@ export default async function ReportsPage({
       className: "border-indigo-200 bg-indigo-50 text-indigo-950",
     },
     {
-      label: "Inventory Retail",
+      label: "Inventory Value",
       value: formatCurrency(totals.inventoryRetail),
       className: "border-cyan-200 bg-cyan-50 text-cyan-950",
     },
