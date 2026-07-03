@@ -120,7 +120,7 @@ export default function Home() {
             </h1>
             <p className="mt-4 max-w-xl text-base leading-7 text-muted-foreground">
               Manage stock, sales, receivables, invoices, and reports for the
-              BIRW store without switching contexts.
+              BIRW store all in one place.
             </p>
           </div>
 
