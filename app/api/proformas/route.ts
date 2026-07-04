@@ -10,6 +10,7 @@ import {
   ProformaListQuerySchema,
 } from "@/lib/db/validators/proforma"
 import { generateProformaNumber } from "@/lib/utils/number-generator"
+import { computeProformaTotals } from "@/lib/utils/proforma-totals"
 import { ZodError } from "zod"
 
 const MAX_PROFORMA_NUMBER_ATTEMPTS = 5
@@ -133,17 +134,17 @@ export async function POST(request: NextRequest) {
       })) ??
       []
 
-    const items = inputItems.map((item) => {
-      const lineTotal = item.quantity * item.unitPrice
-      return {
-        description: item.description,
-        unit: item.unit ?? "pcs",
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        lineTotal,
-      }
+    const totals = computeProformaTotals(inputItems, {
+      discountType: payload.discountType,
+      discountValue: payload.discountValue,
     })
-    const totalAmount = items.reduce((sum, item) => sum + item.lineTotal, 0)
+
+    if (!totals.ok) {
+      return NextResponse.json(
+        { success: false, error: totals.error },
+        { status: 400 }
+      )
+    }
 
     let proforma = null
     for (let attempt = 0; attempt < MAX_PROFORMA_NUMBER_ATTEMPTS; attempt += 1) {
@@ -155,8 +156,10 @@ export async function POST(request: NextRequest) {
           customerName: payload.customerName,
           customerEmail: payload.customerEmail ?? "",
           customerPhone: payload.customerPhone ?? "",
-          items,
-          totalAmount,
+          items: totals.items,
+          subtotalAmount: totals.subtotalAmount,
+          ...(totals.discount ? { discount: totals.discount } : {}),
+          totalAmount: totals.totalAmount,
           issuedAt: new Date(),
           expiresAt: payload.expiresAt ? new Date(payload.expiresAt) : undefined,
         })

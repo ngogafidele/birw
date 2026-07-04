@@ -48,12 +48,27 @@ export async function GET(
         customerName: proforma.customerName,
         customerEmail: proforma.customerEmail ?? "",
         customerPhone: proforma.customerPhone ?? "",
+        subtotalAmount: proforma.subtotalAmount ?? undefined,
+        discount: proforma.discount
+          ? {
+              type: proforma.discount.type,
+              value: proforma.discount.value,
+              amount: proforma.discount.amount,
+            }
+          : undefined,
         totalAmount: proforma.totalAmount,
         items: (proforma.items ?? []).map((item) => ({
           description: item.description,
           unit: item.unit ?? "pcs",
           quantity: item.quantity,
           unitPrice: item.unitPrice,
+          discount: item.discount
+            ? {
+                type: item.discount.type,
+                value: item.discount.value,
+                amount: item.discount.amount,
+              }
+            : undefined,
           lineTotal: item.lineTotal,
         })),
       },

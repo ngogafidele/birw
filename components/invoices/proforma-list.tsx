@@ -21,6 +21,13 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Table,
   TableBody,
   TableCell,
@@ -30,6 +37,10 @@ import {
 } from "@/components/ui/table"
 import type { StoreKey } from "@/lib/auth/session"
 import { formatCurrency } from "@/lib/utils/format"
+import {
+  computeProformaTotals,
+  type ProformaDiscountSnapshot,
+} from "@/lib/utils/proforma-totals"
 import { formatInBusinessTime } from "@/lib/utils/time"
 
 type ProformaInvoice = {
@@ -38,6 +49,8 @@ type ProformaInvoice = {
   customerName: string
   customerEmail?: string
   customerPhone?: string
+  subtotalAmount?: number
+  discount?: ProformaDiscountSnapshot
   totalAmount: number
   issuedAt?: string
   items: Array<{
@@ -45,15 +58,20 @@ type ProformaInvoice = {
     unit?: string
     quantity: number
     unitPrice: number
+    discount?: ProformaDiscountSnapshot
     lineTotal: number
   }>
 }
+
+type DiscountTypeOption = "none" | "percentage" | "amount"
 
 type FormState = {
   customerName: string
   customerEmail: string
   customerPhone: string
   items: FormItem[]
+  discountType: DiscountTypeOption
+  discountValue: string
 }
 
 type FormItem = {
@@ -62,6 +80,8 @@ type FormItem = {
   unit: string
   quantity: string
   unitPrice: string
+  discountType: DiscountTypeOption
+  discountValue: string
 }
 
 function createItemId() {
@@ -79,6 +99,8 @@ function createEmptyItem(): FormItem {
     unit: "pcs",
     quantity: "1",
     unitPrice: "0",
+    discountType: "none",
+    discountValue: "",
   }
 }
 
@@ -88,7 +110,28 @@ function createEmptyForm(): FormState {
     customerEmail: "",
     customerPhone: "",
     items: [createEmptyItem()],
+    discountType: "none",
+    discountValue: "",
   }
+}
+
+function toNumber(value: string, fallback = 0) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function toDiscountInput(
+  type: DiscountTypeOption,
+  value: string
+): { discountType?: "percentage" | "amount"; discountValue?: number } {
+  if (type === "none") return {}
+  return { discountType: type, discountValue: toNumber(value) }
+}
+
+function formatDiscountLabel(discount: ProformaDiscountSnapshot) {
+  return discount.type === "percentage"
+    ? `${discount.value}%`
+    : formatCurrency(discount.value)
 }
 
 function formatDate(date: string | undefined) {
@@ -171,10 +214,10 @@ export function ProformaInvoicesList({
     )
   }, [proformas, search])
 
-  const updateItem = (
+  const updateItem = <K extends keyof Omit<FormItem, "id">>(
     itemId: string,
-    field: keyof Omit<FormItem, "id">,
-    value: string
+    field: K,
+    value: FormItem[K]
   ) => {
     setFormState((prev) => ({
       ...prev,
@@ -183,6 +226,19 @@ export function ProformaInvoicesList({
       ),
     }))
   }
+
+  const liveTotals = useMemo(() => {
+    return computeProformaTotals(
+      formState.items.map((item) => ({
+        description: item.description.trim() || "Item",
+        unit: item.unit.trim() || "pcs",
+        quantity: toNumber(item.quantity, 1),
+        unitPrice: toNumber(item.unitPrice),
+        ...toDiscountInput(item.discountType, item.discountValue),
+      })),
+      toDiscountInput(formState.discountType, formState.discountValue)
+    )
+  }, [formState])
 
   const addItem = () => {
     setFormState((prev) => ({
@@ -221,8 +277,12 @@ export function ProformaInvoicesList({
               unit: item.unit ?? "pcs",
               quantity: String(item.quantity),
               unitPrice: String(item.unitPrice),
+              discountType: item.discount?.type ?? "none",
+              discountValue: item.discount ? String(item.discount.value) : "",
             }))
           : [createEmptyItem()],
+      discountType: proforma.discount?.type ?? "none",
+      discountValue: proforma.discount ? String(proforma.discount.value) : "",
     })
     setError(null)
     setDialogOpen(true)
@@ -235,8 +295,13 @@ export function ProformaInvoicesList({
         unit: item.unit.trim() || "pcs",
         quantity: Number(item.quantity || 1),
         unitPrice: Number(item.unitPrice || 0),
+        ...toDiscountInput(item.discountType, item.discountValue),
       }))
       .filter((item) => item.description)
+    const documentDiscount = toDiscountInput(
+      formState.discountType,
+      formState.discountValue
+    )
 
     if (!formState.customerName.trim() || items.length === 0) {
       setError("Enter the customer and at least one item.")
@@ -257,6 +322,27 @@ export function ProformaInvoicesList({
       return
     }
 
+    if (
+      [...items, documentDiscount].some(
+        (entry) =>
+          entry.discountType !== undefined &&
+          ((entry.discountValue ?? 0) < 0 ||
+            (entry.discountType === "percentage" &&
+              (entry.discountValue ?? 0) > 100))
+      )
+    ) {
+      setError(
+        "Discount values must be zero or more, and percentages cannot exceed 100."
+      )
+      return
+    }
+
+    const totals = computeProformaTotals(items, documentDiscount)
+    if (!totals.ok) {
+      setError(totals.error)
+      return
+    }
+
     setSubmitting(true)
     setError(null)
 
@@ -273,6 +359,7 @@ export function ProformaInvoicesList({
             customerEmail: formState.customerEmail.trim() || undefined,
             customerPhone: formState.customerPhone.trim() || undefined,
             items,
+            ...documentDiscount,
           }),
         }
       )
@@ -590,6 +677,54 @@ export function ProformaInvoicesList({
                         />
                       </label>
                     </div>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <label className="grid gap-1 text-sm">
+                        Discount
+                        <Select
+                          value={item.discountType}
+                          onValueChange={(value) =>
+                            updateItem(
+                              item.id,
+                              "discountType",
+                              value as DiscountTypeOption
+                            )
+                          }
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="No discount" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">No discount</SelectItem>
+                            <SelectItem value="percentage">
+                              Percentage (%)
+                            </SelectItem>
+                            <SelectItem value="amount">Amount (Rwf)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </label>
+                      {item.discountType !== "none" ? (
+                        <label className="grid gap-1 text-sm">
+                          Discount value
+                          <Input
+                            type="number"
+                            min="0"
+                            max={
+                              item.discountType === "percentage"
+                                ? "100"
+                                : undefined
+                            }
+                            value={item.discountValue}
+                            onChange={(event) =>
+                              updateItem(
+                                item.id,
+                                "discountValue",
+                                event.target.value
+                              )
+                            }
+                          />
+                        </label>
+                      ) : null}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -603,6 +738,78 @@ export function ProformaInvoicesList({
                 <Plus className="size-4" />
                 Add item
               </Button>
+            </div>
+            <div className="grid gap-3 rounded-lg border border-border p-3">
+              <h3 className="text-sm font-semibold">Document discount</h3>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1 text-sm">
+                  Discount
+                  <Select
+                    value={formState.discountType}
+                    onValueChange={(value) =>
+                      setFormState((prev) => ({
+                        ...prev,
+                        discountType: value as DiscountTypeOption,
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="No discount" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No discount</SelectItem>
+                      <SelectItem value="percentage">Percentage (%)</SelectItem>
+                      <SelectItem value="amount">Amount (Rwf)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </label>
+                {formState.discountType !== "none" ? (
+                  <label className="grid gap-1 text-sm">
+                    Discount value
+                    <Input
+                      type="number"
+                      min="0"
+                      max={
+                        formState.discountType === "percentage"
+                          ? "100"
+                          : undefined
+                      }
+                      value={formState.discountValue}
+                      onChange={(event) =>
+                        setFormState((prev) => ({
+                          ...prev,
+                          discountValue: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                ) : null}
+              </div>
+            </div>
+            <div className="rounded-lg border border-border/80 bg-muted/40 px-4 py-3 text-sm">
+              {liveTotals.ok ? (
+                <div className="grid gap-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Subtotal</span>
+                    <span>{formatCurrency(liveTotals.subtotalAmount)}</span>
+                  </div>
+                  {liveTotals.discount ? (
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">
+                        Document discount (
+                        {formatDiscountLabel(liveTotals.discount)})
+                      </span>
+                      <span>-{formatCurrency(liveTotals.discount.amount)}</span>
+                    </div>
+                  ) : null}
+                  <div className="flex items-center justify-between font-semibold">
+                    <span>Total</span>
+                    <span>{formatCurrency(liveTotals.totalAmount)}</span>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-destructive">{liveTotals.error}</p>
+              )}
             </div>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
           </div>
@@ -649,9 +856,36 @@ export function ProformaInvoicesList({
                     {item.description} - {item.quantity}{" "}
                     {item.unit ?? "pcs"} -{" "}
                     {formatCurrency(item.lineTotal)}
+                    {item.discount ? (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        (discount {formatDiscountLabel(item.discount)}: -
+                        {formatCurrency(item.discount.amount)})
+                      </span>
+                    ) : null}
                   </p>
                 ))}
               </div>
+              {detailProforma.discount ? (
+                <div className="grid gap-1 rounded-lg border border-border/80 bg-muted/40 px-4 py-3">
+                  <p>
+                    Subtotal:{" "}
+                    {formatCurrency(
+                      detailProforma.subtotalAmount ??
+                        detailProforma.totalAmount +
+                          detailProforma.discount.amount
+                    )}
+                  </p>
+                  <p>
+                    Document discount (
+                    {formatDiscountLabel(detailProforma.discount)}): -
+                    {formatCurrency(detailProforma.discount.amount)}
+                  </p>
+                  <p className="font-semibold">
+                    Total: {formatCurrency(detailProforma.totalAmount)}
+                  </p>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </DialogContent>

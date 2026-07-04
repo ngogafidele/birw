@@ -5,6 +5,7 @@ import { requireAdmin, requireAuth } from "@/lib/auth/middleware"
 import { resolveStoreFromRequest } from "@/lib/auth/session"
 import { Proforma } from "@/lib/db/models/Proforma"
 import { UpdateProformaSchema } from "@/lib/db/validators/proforma"
+import { computeProformaTotals } from "@/lib/utils/proforma-totals"
 import { ZodError } from "zod"
 
 export async function GET(
@@ -119,29 +120,41 @@ export async function PUT(
 
     const { id } = await context.params
     const payload = UpdateProformaSchema.parse(await request.json())
-    const items = payload.items.map((item) => {
-      const lineTotal = item.quantity * item.unitPrice
-      return {
-        description: item.description,
-        unit: item.unit ?? "pcs",
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        lineTotal,
-      }
+    const totals = computeProformaTotals(payload.items, {
+      discountType: payload.discountType,
+      discountValue: payload.discountValue,
     })
-    const totalAmount = items.reduce((sum, item) => sum + item.lineTotal, 0)
+
+    if (!totals.ok) {
+      return NextResponse.json(
+        { success: false, error: totals.error },
+        { status: 400 }
+      )
+    }
+
+    const update: Record<string, unknown> = {
+      $set: {
+        customerName: payload.customerName,
+        customerEmail: payload.customerEmail ?? "",
+        customerPhone: payload.customerPhone ?? "",
+        items: totals.items,
+        subtotalAmount: totals.subtotalAmount,
+        totalAmount: totals.totalAmount,
+        ...(totals.discount ? { discount: totals.discount } : {}),
+        ...(payload.expiresAt
+          ? { expiresAt: new Date(payload.expiresAt) }
+          : {}),
+      },
+    }
+    // A removed document discount must be unset, not left stale.
+    if (!totals.discount) {
+      update.$unset = { discount: "" }
+    }
 
     await connectToDatabase()
     const proforma = await Proforma.findOneAndUpdate(
       { _id: id, storeId: store },
-      {
-        customerName: payload.customerName,
-        customerEmail: payload.customerEmail ?? "",
-        customerPhone: payload.customerPhone ?? "",
-        items,
-        totalAmount,
-        expiresAt: payload.expiresAt ? new Date(payload.expiresAt) : undefined,
-      },
+      update,
       { returnDocument: "after", runValidators: true }
     )
 

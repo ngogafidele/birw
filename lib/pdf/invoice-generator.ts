@@ -24,12 +24,19 @@ const PDFDocument =
     ? PDFKitModule
     : PDFKitModule.default ?? PDFKitModule.PDFDocument
 
+type PdfDiscount = {
+  type: "percentage" | "amount"
+  value: number
+  amount: number
+}
+
 type PdfItem = {
   description: string
   sku?: string
   unit?: string
   quantity: number
   unitPrice: number
+  discount?: PdfDiscount
   lineTotal: number
 }
 
@@ -40,6 +47,8 @@ type PdfDocumentData = {
   customerEmail?: string
   customerPhone?: string
   status?: string
+  subtotalAmount?: number
+  discount?: PdfDiscount
   totalAmount: number
   items: PdfItem[]
 }
@@ -216,6 +225,14 @@ function truncateToWidth(
   return `${text.slice(0, start).trimEnd()}${suffix}`
 }
 
+function formatDiscountNote(discount: PdfDiscount) {
+  const label =
+    discount.type === "percentage"
+      ? `${discount.value}%`
+      : formatCurrency(discount.value)
+  return `Discount ${label}: -${formatCurrency(discount.amount)}`
+}
+
 function writeInvoicePdf(
   title: string,
   data: PdfDocumentData,
@@ -314,7 +331,13 @@ function writeInvoicePdf(
     doc.font("Helvetica-Bold").fontSize(7)
     const description = truncateToWidth(doc, item.description, 190)
     doc.font("Helvetica-Bold").fontSize(6)
-    const sku = item.sku ? truncateToWidth(doc, item.sku, 190) : ""
+    const subLineText = [
+      item.sku,
+      item.discount ? formatDiscountNote(item.discount) : "",
+    ]
+      .filter(Boolean)
+      .join("  ")
+    const sku = subLineText ? truncateToWidth(doc, subLineText, 190) : ""
 
     doc
       .fillColor(index % 2 === 0 ? PDF_COLORS.surface : PDF_COLORS.rowAlt)
@@ -338,7 +361,11 @@ function writeInvoicePdf(
     y += TABLE_ROW_HEIGHT + 2
   })
 
-  if (y > 660) {
+  // A document-level discount adds Subtotal and Discount rows above Total.
+  const documentDiscount = data.discount
+  const totalsExtra = documentDiscount ? 34 : 0
+
+  if (y > 660 - totalsExtra) {
     doc.addPage()
     y = 56
   }
@@ -348,16 +375,41 @@ function writeInvoicePdf(
     .lineTo(547, y)
     .strokeColor(PDF_COLORS.border)
     .stroke()
+
+  if (documentDiscount) {
+    const subtotal =
+      data.subtotalAmount ?? data.totalAmount + documentDiscount.amount
+    const discountLabel =
+      documentDiscount.type === "percentage"
+        ? `Discount (${documentDiscount.value}%)`
+        : "Discount"
+
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(10)
+      .fillColor(PDF_COLORS.text)
+      .text("Subtotal", 355, y + 14)
+      .text(formatCurrency(subtotal), 448, y + 14, { width: 92 })
+      .fillColor(PDF_COLORS.mutedText)
+      .text(discountLabel, 355, y + 30)
+      .text(`-${formatCurrency(documentDiscount.amount)}`, 448, y + 30, {
+        width: 92,
+      })
+  }
+
+  doc
     .font("Helvetica-Bold")
     .fontSize(14)
     .fillColor(PDF_COLORS.text)
-    .text("Total", 355, y + 20)
-    .text(formatCurrency(data.totalAmount), 448, y + 20, { width: 92 })
+    .text("Total", 355, y + 20 + totalsExtra)
+    .text(formatCurrency(data.totalAmount), 448, y + 20 + totalsExtra, {
+      width: 92,
+    })
 
-  drawStamp(doc, y)
+  drawStamp(doc, y + totalsExtra)
 
   if (footerLines.length > 0) {
-    let footerY = y + 58
+    let footerY = y + 58 + totalsExtra
     if (footerY > 700) {
       doc.addPage()
       footerY = 56
