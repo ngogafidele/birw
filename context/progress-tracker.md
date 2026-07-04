@@ -7,7 +7,7 @@ Update this file after meaningful feature work. It should let the next agent see
 ## Current Status
 
 **Phase:** Production maintenance and feature iteration  
-**Last documented:** Admin product stock monitor (movement history modal with recharts + time-range selector)
+**Last documented:** Admin product stock monitor (movement history modal with recharts + time-range selector) and batch multi-product add
 **Next:** Keep context files updated after future feature changes
 
 ---
@@ -39,6 +39,7 @@ Update this file after meaningful feature work. It should let the next agent see
 - [x] Bottom-left PDF payment/business details on invoices, proformas, and outstanding statements show only BPR bank accounts and MoMo
 - [x] PDF table/body rows use smaller text than table headers and titles across invoices, proformas, outstanding statements, product catalog, and management reports
 - [x] Admin product "Monitor" action opens a modal reconstructing a product's stock-movement history from receipts, sales, loans, returns, replacements, and adjustments (recharts balance line + by-reason breakdown + event table), with a 30d/90d/1y/all time-range selector; balance is anchored to live quantity via an opening-balance residual (`GET /api/products/[id]/movements`)
+- [x] Add Products dialog creates multiple products in one session (repeatable entry rows, add/remove, per-row error reporting); each row posts through the existing single-product endpoint so SKU/receipt/low-stock logic is unchanged; edit remains single-product
 - [x] Bottom-left PDF BPR bank accounts have enough line width to keep both account numbers on the same line
 - [x] Sales invoices, proformas, and outstanding statements include the closing line `Thank you for doing business with us.`
 - [x] Proformas support row-level and document-level discounts (percentage or amount) with server-computed snapshots, live form totals, detail breakdown, and PDF breakdown

@@ -141,8 +141,11 @@ File: `components/products/products-manager.tsx`
 | Warning text | `text-xs text-amber-600` |
 | Low badge | `rounded-md bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700` |
 | Below cost badge | `rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700` |
+| Add dialog (create) | Widened `sm:max-w-2xl max-h-[90vh] overflow-y-auto`; repeatable entry cards `grid gap-3 rounded-xl border border-border p-3` with a `Product N` header + ghost `Trash2` remove, an outline `Add another product` button, and a per-row `_error` line |
+| Edit dialog | Single entry, default dialog width, no supplier fields |
+| Shared fields | `ProductFields` renders the Name/Unit/Quantity/Threshold/Cost/Selling grid (+ optional supplier) for both edit and each create row |
 
-Pattern notes: Products combines catalog scanning, PDF export, admin create/edit/delete, receiving, and stock monitoring in one manager. The admin Actions cell orders Monitor, Receive, Edit, Delete.
+Pattern notes: Products combines catalog scanning, PDF export, admin create/edit/delete, receiving, and stock monitoring in one manager. The admin Actions cell orders Monitor, Receive, Edit, Delete. The Add dialog creates multiple products in one session: each row is submitted through the single-product `POST /api/products` endpoint (so SKU generation, supplier receipts, and low-stock sync stay identical), successful rows prepend to the list, and failed rows stay in the dialog with their own error so the user can fix and resubmit only those.
 
 ---
 
