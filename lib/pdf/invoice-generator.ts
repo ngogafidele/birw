@@ -225,21 +225,14 @@ function truncateToWidth(
   return `${text.slice(0, start).trimEnd()}${suffix}`
 }
 
-function formatDiscountNote(discount: PdfDiscount) {
-  const label =
-    discount.type === "percentage"
-      ? `${discount.value}%`
-      : formatCurrency(discount.value)
-  return `Discount ${label}: -${formatCurrency(discount.amount)}`
-}
-
 function writeInvoicePdf(
   title: string,
   data: PdfDocumentData,
   storeInfo: StoreInfo,
   recipientLabel = "Bill To",
   footerLines: string[] = [],
-  centeredFooterLine?: string
+  centeredFooterLine?: string,
+  showDiscountColumn = false
 ) {
   if (!PDFDocument) {
     const keys =
@@ -300,13 +293,33 @@ function writeInvoicePdf(
     .text(data.customerPhone ?? "", 330, 276)
 
   const tableTop = 320
-  const columns = {
-    no: 54,
-    item: 88,
-    quantity: 292,
-    price: 355,
-    total: 448,
-  }
+  const columns = showDiscountColumn
+    ? {
+        no: 52,
+        item: 78,
+        itemWidth: 148,
+        quantity: 230,
+        qtyWidth: 50,
+        price: 288,
+        priceWidth: 66,
+        discount: 360,
+        discountWidth: 78,
+        total: 444,
+        totalWidth: 103,
+      }
+    : {
+        no: 54,
+        item: 88,
+        itemWidth: 190,
+        quantity: 292,
+        qtyWidth: 54,
+        price: 355,
+        priceWidth: 82,
+        discount: 0,
+        discountWidth: 0,
+        total: 448,
+        totalWidth: 92,
+      }
 
   doc
     .rect(48, tableTop, 499, 24)
@@ -316,10 +329,18 @@ function writeInvoicePdf(
     .fillColor(PDF_COLORS.sectionText)
     .fontSize(9)
     .text("NO", columns.no, tableTop + 8, { width: 24 })
-    .text("ITEM DESCRIPTION", columns.item, tableTop + 8, { width: 190 })
-    .text("QTY", columns.quantity, tableTop + 8, { width: 54 })
-    .text("PRICE", columns.price, tableTop + 8, { width: 82 })
-    .text("TOTAL", columns.total, tableTop + 8, { width: 92 })
+    .text("ITEM DESCRIPTION", columns.item, tableTop + 8, {
+      width: columns.itemWidth,
+    })
+    .text("QTY", columns.quantity, tableTop + 8, { width: columns.qtyWidth })
+    .text("PRICE", columns.price, tableTop + 8, { width: columns.priceWidth })
+    .text("TOTAL", columns.total, tableTop + 8, { width: columns.totalWidth })
+
+  if (showDiscountColumn) {
+    doc.text("DISCOUNT", columns.discount, tableTop + 8, {
+      width: columns.discountWidth,
+    })
+  }
 
   let y = tableTop + 32
   data.items.forEach((item, index) => {
@@ -329,15 +350,11 @@ function writeInvoicePdf(
     }
 
     doc.font("Helvetica-Bold").fontSize(7)
-    const description = truncateToWidth(doc, item.description, 190)
+    const description = truncateToWidth(doc, item.description, columns.itemWidth)
     doc.font("Helvetica-Bold").fontSize(6)
-    const subLineText = [
-      item.sku,
-      item.discount ? formatDiscountNote(item.discount) : "",
-    ]
-      .filter(Boolean)
-      .join("  ")
-    const sku = subLineText ? truncateToWidth(doc, subLineText, 190) : ""
+    const sku = item.sku
+      ? truncateToWidth(doc, item.sku, columns.itemWidth)
+      : ""
 
     doc
       .fillColor(index % 2 === 0 ? PDF_COLORS.surface : PDF_COLORS.rowAlt)
@@ -347,16 +364,46 @@ function writeInvoicePdf(
       .fillColor(PDF_COLORS.text)
       .fontSize(7)
       .text(String(index + 1), columns.no, y, { width: 24 })
-      .text(description, columns.item, y, { width: 190 })
+      .text(description, columns.item, y, { width: columns.itemWidth })
       .fillColor(PDF_COLORS.mutedText)
       .fontSize(6)
-      .text(sku, columns.item, y + 10, { width: 190 })
+      .text(sku, columns.item, y + 10, { width: columns.itemWidth })
       .font("Helvetica-Bold")
       .fillColor(PDF_COLORS.text)
       .fontSize(7)
       .text(`${item.quantity} ${item.unit ?? "pcs"}`, columns.quantity, y)
-      .text(formatCurrency(item.unitPrice), columns.price, y, { width: 82 })
-      .text(formatCurrency(item.lineTotal), columns.total, y, { width: 92 })
+      .text(formatCurrency(item.unitPrice), columns.price, y, {
+        width: columns.priceWidth,
+      })
+      .text(formatCurrency(item.lineTotal), columns.total, y, {
+        width: columns.totalWidth,
+      })
+
+    if (showDiscountColumn) {
+      const discount = item.discount
+      const discountMain = discount
+        ? discount.type === "percentage"
+          ? `${discount.value}%`
+          : `-${formatCurrency(discount.amount)}`
+        : "—"
+
+      doc
+        .font("Helvetica-Bold")
+        .fillColor(PDF_COLORS.text)
+        .fontSize(7)
+        .text(discountMain, columns.discount, y, {
+          width: columns.discountWidth,
+        })
+
+      if (discount && discount.type === "percentage") {
+        doc
+          .fillColor(PDF_COLORS.mutedText)
+          .fontSize(6)
+          .text(`-${formatCurrency(discount.amount)}`, columns.discount, y + 10, {
+            width: columns.discountWidth,
+          })
+      }
+    }
 
     y += TABLE_ROW_HEIGHT + 2
   })
@@ -388,12 +435,14 @@ function writeInvoicePdf(
       .font("Helvetica-Bold")
       .fontSize(10)
       .fillColor(PDF_COLORS.text)
-      .text("Subtotal", 355, y + 14)
-      .text(formatCurrency(subtotal), 448, y + 14, { width: 92 })
+      .text("Subtotal", columns.price, y + 14)
+      .text(formatCurrency(subtotal), columns.total, y + 14, {
+        width: columns.totalWidth,
+      })
       .fillColor(PDF_COLORS.mutedText)
-      .text(discountLabel, 355, y + 30)
-      .text(`-${formatCurrency(documentDiscount.amount)}`, 448, y + 30, {
-        width: 92,
+      .text(discountLabel, columns.price, y + 30)
+      .text(`-${formatCurrency(documentDiscount.amount)}`, columns.total, y + 30, {
+        width: columns.totalWidth,
       })
   }
 
@@ -401,9 +450,9 @@ function writeInvoicePdf(
     .font("Helvetica-Bold")
     .fontSize(14)
     .fillColor(PDF_COLORS.text)
-    .text("Total", 355, y + 20 + totalsExtra)
-    .text(formatCurrency(data.totalAmount), 448, y + 20 + totalsExtra, {
-      width: 92,
+    .text("Total", columns.price, y + 20 + totalsExtra)
+    .text(formatCurrency(data.totalAmount), columns.total, y + 20 + totalsExtra, {
+      width: columns.totalWidth,
     })
 
   drawStamp(doc, y + totalsExtra)
@@ -473,6 +522,7 @@ export function generateProformaPDF(
     storeInfo,
     "Proforma To",
     getBusinessFooterLines(storeInfo),
-    THANK_YOU_LINE
+    THANK_YOU_LINE,
+    true
   )
 }
