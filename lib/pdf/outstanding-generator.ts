@@ -308,10 +308,10 @@ export function generateOutstandingCustomerPDF(
     .text(storeInfo.name ?? "BIRW INVESTMENT GROUP Ltd", 48, contentStart)
   mutedText(doc)
     .fontSize(9)
-    .text(storeInfo.address ?? "", 48, contentStart + 18)
+    .text(storeInfo.tin ? `TIN: ${storeInfo.tin}` : "", 48, contentStart + 18)
     .text(storeInfo.phone ?? "", 48, contentStart + 32)
-    .text(storeInfo.email ?? "", 48, contentStart + 46)
-    .text(storeInfo.tin ? `TIN: ${storeInfo.tin}` : "", 48, contentStart + 60)
+    .text(storeInfo.address ?? "", 48, contentStart + 46)
+    .text(storeInfo.email ?? "", 48, contentStart + 60)
 
   boldText(doc).fontSize(11).text("Customer", 330, contentStart)
   mutedText(doc)

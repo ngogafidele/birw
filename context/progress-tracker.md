@@ -7,7 +7,7 @@ Update this file after meaningful feature work. It should let the next agent see
 ## Current Status
 
 **Phase:** Production maintenance and feature iteration  
-**Last documented:** PDF closing thank-you line appears on invoices and statements
+**Last documented:** Proforma row/document discounts and reordered PDF store identity block
 **Next:** Keep context files updated after future feature changes
 
 ---
@@ -40,6 +40,8 @@ Update this file after meaningful feature work. It should let the next agent see
 - [x] PDF table/body rows use smaller text than table headers and titles across invoices, proformas, outstanding statements, product catalog, and management reports
 - [x] Bottom-left PDF BPR bank accounts have enough line width to keep both account numbers on the same line
 - [x] Sales invoices, proformas, and outstanding statements include the closing line `Thank you for doing business with us.`
+- [x] Proformas support row-level and document-level discounts (percentage or amount) with server-computed snapshots, live form totals, detail breakdown, and PDF breakdown
+- [x] Invoice, proforma, and outstanding statement PDFs order the store identity block as name, TIN, telephone, address, email
 
 ---
 
@@ -56,7 +58,8 @@ Update this file after meaningful feature work. It should let the next agent see
 - PDFKit requires Node/server-only execution.
 - PDF document styling should use `lib/pdf/pdf-theme.ts` so generated documents stay aligned with the website palette.
 - PDFKit only supports JPEG/PNG image embedding in the installed version, so PDF generators intentionally keep `logo.png` and `stamp.jpg` while browser/UI assets can use WebP.
-- Invoice, proforma, and outstanding statement store identity blocks should show TIN below email; bottom-left payment details should list only BPR bank accounts and MoMo.
+- Invoice, proforma, and outstanding statement store identity blocks order name, TIN, telephone, address, then email; bottom-left payment details should list only BPR bank accounts and MoMo.
+- Proforma discounts: row discounts reduce each line total first (fixed amounts come off the line total, not per unit); the document discount then applies to the discounted subtotal; discounts may never push a line or the document below zero. `computeProformaTotals` in `lib/utils/proforma-totals.ts` is the single source of the math for routes and the client form; stored snapshots keep `lineTotal` net, plus `subtotalAmount` and `discount { type, value, amount }` fields. Discounts are proforma-only; sales invoice PDFs are unaffected.
 - PDF titles, section headings, totals, and table headers should remain prominent; data/body rows should stay smaller for visual hierarchy.
 - Bottom-left PDF payment details should use a wide text block so BPR bank account numbers do not wrap onto separate lines.
 - Sales invoices, proformas, and outstanding statements should close with `Thank you for doing business with us.`

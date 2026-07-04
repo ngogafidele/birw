@@ -285,10 +285,10 @@ function writeInvoicePdf(
     .text(storeInfo.name ?? "BIRW INVESTMENT GROUP Ltd", 48, 230)
   mutedText(doc)
     .fontSize(9)
-    .text(storeInfo.address ?? "", 48, 248)
+    .text(storeInfo.tin ? `TIN: ${storeInfo.tin}` : "", 48, 248)
     .text(storeInfo.phone ?? "", 48, 262)
-    .text(storeInfo.email ?? "", 48, 276)
-    .text(storeInfo.tin ? `TIN: ${storeInfo.tin}` : "", 48, 290)
+    .text(storeInfo.address ?? "", 48, 276)
+    .text(storeInfo.email ?? "", 48, 290)
 
   boldText(doc)
     .fontSize(11)

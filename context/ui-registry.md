@@ -217,8 +217,26 @@ Last updated: 2026-06-24
 | Table headers | Uppercase labels with `NO` numbering columns where row/transaction tables are listed |
 | Table body rows | Smaller bold text than headers/titles for print hierarchy; white alternating with light green-tinted `#f6faf6` |
 | Borders/rules | Token border green `#d3e3d7` |
-| Store identity block | Store name, address, phone, email, then TIN directly below email |
+| Store identity block | Store name, then TIN, telephone, address, and email in that order |
 | Payment detail footer | Bottom-left details list only BPR bank accounts and MoMo; width keeps both BPR accounts on one line |
 | Closing line | Sales invoices, proformas, and outstanding statements use `Thank you for doing business with us.` |
 
-Pattern notes: Customer-facing and management PDFs should use `PDF_COLORS` instead of local hardcoded print palettes. Keep invoice, proforma, product catalog, outstanding statement, and management report colors aligned with the website palette while preserving print-safe contrast. Table title rows use uppercase labels, row/transaction tables include a `NO` column, TIN belongs with the store identity block below email, bottom-left payment details stay limited to payment identifiers, and PDF text uses bold built-in fonts with darker muted text so printed documents remain legible.
+Pattern notes: Customer-facing and management PDFs should use `PDF_COLORS` instead of local hardcoded print palettes. Keep invoice, proforma, product catalog, outstanding statement, and management report colors aligned with the website palette while preserving print-safe contrast. Table title rows use uppercase labels, row/transaction tables include a `NO` column, the store identity block orders name, TIN, telephone, address, then email, bottom-left payment details stay limited to payment identifiers, and PDF text uses bold built-in fonts with darker muted text so printed documents remain legible. Proforma PDFs render row discounts as a muted sub-line under the item description (`Discount 10%: -1,000 Rwf`) and, when a document discount exists, a Subtotal / Discount / Total block above the grand total.
+
+---
+
+## Proforma Discounts
+
+Files: `components/invoices/proforma-list.tsx`, `lib/utils/proforma-totals.ts`
+Last updated: 2026-07-04
+
+| Property | Pattern |
+| --- | --- |
+| Discount type field | Local `Select` with options No discount / Percentage (%) / Amount (Rwf) |
+| Discount value field | `Input type="number" min="0"`, `max="100"` for percentage, shown only when a type is selected |
+| Row discount placement | Extra `grid gap-3 sm:grid-cols-3` row inside each item card |
+| Document discount block | `grid gap-3 rounded-lg border border-border p-3` section below the items list |
+| Totals strip | `rounded-lg border border-border/80 bg-muted/40 px-4 py-3 text-sm` with Subtotal, optional Document discount, and bold Total rows |
+| Detail view | Per-line muted `(discount ...)` note plus a muted Subtotal / Document discount / Total strip when a document discount exists |
+
+Pattern notes: All discount math lives in `computeProformaTotals` (`lib/utils/proforma-totals.ts`), shared by the API routes and the client form so live totals always match server results. Row discounts apply to the line total first; the document discount applies to the discounted subtotal; nothing may go below zero.
