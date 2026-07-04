@@ -142,7 +142,7 @@ File: `components/products/products-manager.tsx`
 | Low badge | `rounded-md bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700` |
 | Below cost badge | `rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700` |
 
-Pattern notes: Products combines catalog scanning, PDF export, admin create/edit/delete, and receiving in one manager.
+Pattern notes: Products combines catalog scanning, PDF export, admin create/edit/delete, receiving, and stock monitoring in one manager. The admin Actions cell orders Monitor, Receive, Edit, Delete.
 
 ---
 
@@ -240,3 +240,24 @@ Last updated: 2026-07-04
 | Detail view | Per-line muted `(discount ...)` note plus a muted Subtotal / Document discount / Total strip when a document discount exists |
 
 Pattern notes: All discount math lives in `computeProformaTotals` (`lib/utils/proforma-totals.ts`), shared by the API routes and the client form so live totals always match server results. Row discounts apply to the line total first; the document discount applies to the discounted subtotal; nothing may go below zero.
+
+---
+
+## Product Stock Monitor
+
+Files: `components/products/product-monitor-dialog.tsx`, `components/products/stock-movement-charts.tsx`, `app/api/products/[id]/movements/route.ts`
+Last updated: 2026-07-04
+
+| Property | Pattern |
+| --- | --- |
+| Trigger | Admin-only `Monitor` button (lucide `Activity`) as the first item in the products Actions cell |
+| Modal | `DialogContent` widened to `max-h-[90vh] gap-4 overflow-y-auto sm:max-w-3xl` |
+| Range selector | Row of `Button size="sm"` chips (30 days / 90 days / 1 year / All time); active uses `variant="default"`, others `outline` |
+| Stat tiles | `grid grid-cols-2 gap-3 sm:grid-cols-4`; each `rounded-xl border border-border bg-card p-3` with uppercase eyebrow + `text-lg font-semibold` value (Opening / Total in / Total out / Current) |
+| Chart cards | `rounded-xl border border-border bg-card p-3` wrapping a recharts `ResponsiveContainer height={240}` |
+| Balance chart | `AreaChart` `type="stepAfter"`, fill gradient on `var(--chart-1)`; anchored to live quantity via opening-balance point |
+| Breakdown chart | `BarChart` with per-`Cell` fill: in = `var(--chart-1)`, out = `var(--chart-2)`; legend dots below |
+| Axis/tooltip | Ticks `fill: var(--muted-foreground)`; tooltip `bg var(--popover)`, `border var(--border)`, radius 12 |
+| Event table | Reuses the local `Table`; movement badge in = `bg-emerald-50 text-emerald-700`, out = `bg-rose-50 text-rose-700`; signed change column in emerald/rose |
+
+Pattern notes: The modal is read-only and admin-only. The API (`GET /api/products/[id]/movements`) reconstructs history by merging `ProductReceipt` (in), `Return.returnItems` (in) / `replacementItems` (out), `Sale.items` incl. loans (out), and `StockAdjustment` (±), then anchors the running balance to the true `product.quantity`, surfacing any residual as an "Opening" baseline. Time ranges are derived entirely client-side from the full history (no refetch); a bounded range recomputes its own opening balance, totals, breakdown, and series so the numbers stay honest. Chart colors must stay on the `--chart-*` tokens; do not hardcode hex chart colors.
