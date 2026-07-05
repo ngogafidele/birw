@@ -666,8 +666,7 @@ export function ProductsManager({
             <FileText className="size-4" />
             {catalogDownloading ? "Preparing..." : "Catalog PDF"}
           </Button>
-          {isAdmin ? (
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
                 <Button onClick={openCreate}>Add Products</Button>
               </DialogTrigger>
@@ -764,7 +763,6 @@ export function ProductsManager({
                 </DialogFooter>
               </DialogContent>
             </Dialog>
-          ) : null}
         </div>
       </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -896,16 +894,13 @@ export function ProductsManager({
             <TableHead>Selling Price</TableHead>
             <TableHead>Last Restock</TableHead>
             <TableHead>Supplier</TableHead>
-            {isAdmin ? <TableHead className="text-right">Actions</TableHead> : null}
+            <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {paginatedProducts.length === 0 ? (
             <TableRow>
-              <TableCell
-                colSpan={isAdmin ? 10 : 9}
-                className="text-muted-foreground"
-              >
+              <TableCell colSpan={10} className="text-muted-foreground">
                 No products found.
               </TableCell>
             </TableRow>
@@ -946,9 +941,9 @@ export function ProductsManager({
                 </TableCell>
                 <TableCell>{product.lastRestockLabel ?? "-"}</TableCell>
                 <TableCell>{product.supplierName ?? "-"}</TableCell>
-                {isAdmin ? (
-                  <TableCell className="text-right">
-                    <div className="flex flex-wrap justify-end gap-2">
+                <TableCell className="text-right">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {isAdmin ? (
                       <Button
                         size="sm"
                         variant="outline"
@@ -957,22 +952,24 @@ export function ProductsManager({
                         <Activity className="size-4" />
                         Monitor
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openReceive(product)}
-                        disabled={submitting}
-                      >
-                        <PackagePlus className="size-4" />
-                        Receive
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openEdit(product)}
-                      >
-                        Edit
-                      </Button>
+                    ) : null}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => openReceive(product)}
+                      disabled={submitting}
+                    >
+                      <PackagePlus className="size-4" />
+                      Receive
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => openEdit(product)}
+                    >
+                      Edit
+                    </Button>
+                    {isAdmin ? (
                       <Button
                         size="sm"
                         variant="destructive"
@@ -981,9 +978,9 @@ export function ProductsManager({
                       >
                         Delete
                       </Button>
-                    </div>
-                  </TableCell>
-                ) : null}
+                    ) : null}
+                  </div>
+                </TableCell>
               </TableRow>
             ))
           )}

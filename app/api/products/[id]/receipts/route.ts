@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { connectToDatabase } from "@/lib/db/connection"
 import { Product } from "@/lib/db/models/Product"
 import { ProductReceipt } from "@/lib/db/models/ProductReceipt"
-import { requireAdmin } from "@/lib/auth/middleware"
+import { requireAuth } from "@/lib/auth/middleware"
 import { resolveStoreFromRequest } from "@/lib/auth/session"
 import { syncLowStockAlert } from "@/lib/db/alerts"
 import { CreateProductReceiptSchema } from "@/lib/db/validators/product-receipt"
@@ -15,11 +15,11 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { authorized, session } = await requireAdmin(request)
+    const { authorized, session } = await requireAuth(request)
     if (!authorized || !session) {
       return NextResponse.json(
-        { success: false, error: "Admin only" },
-        { status: 403 }
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
       )
     }
 

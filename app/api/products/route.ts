@@ -4,7 +4,7 @@ import { connectToDatabase } from "@/lib/db/connection"
 import { NumberSequence } from "@/lib/db/models/NumberSequence"
 import { Product } from "@/lib/db/models/Product"
 import { ProductReceipt } from "@/lib/db/models/ProductReceipt"
-import { requireAdmin, requireAuth } from "@/lib/auth/middleware"
+import { requireAuth } from "@/lib/auth/middleware"
 import { resolveStoreFromRequest, type StoreKey } from "@/lib/auth/session"
 import { CreateProductSchema } from "@/lib/db/validators/product"
 import { syncLowStockAlert } from "@/lib/db/alerts"
@@ -129,11 +129,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { authorized, session } = await requireAdmin(request)
+    const { authorized, session } = await requireAuth(request)
     if (!authorized || !session) {
       return NextResponse.json(
-        { success: false, error: "Admin only" },
-        { status: 403 }
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
       )
     }
 

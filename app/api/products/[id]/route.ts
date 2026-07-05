@@ -72,11 +72,11 @@ export async function PUT(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { authorized, session } = await requireAdmin(request)
+    const { authorized, session } = await requireAuth(request)
     if (!authorized || !session) {
       return NextResponse.json(
-        { success: false, error: "Admin only" },
-        { status: 403 }
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
       )
     }
 
