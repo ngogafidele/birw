@@ -21,6 +21,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ReportPrintButton } from "@/components/reports/report-print-button"
 import {
+  PaymentMixChart,
+  RevenueProfitTrendChart,
+  TopProductsChart,
+  type PaymentMixPoint,
+  type TrendPoint,
+} from "@/components/reports/report-charts"
+import {
   Table,
   TableBody,
   TableCell,
@@ -88,6 +95,28 @@ type ExpenseTotals = {
 type OutstandingSaleTotals = {
   _id: StoreKey
   outstanding: number
+}
+
+type DailySaleTotals = {
+  _id: string
+  revenue: number
+  grossProfit: number
+}
+
+type DailyReturnTotals = {
+  _id: string
+  revenue: number
+  grossProfit: number
+}
+
+type DailyExpenseTotals = {
+  _id: string
+  expenses: number
+}
+
+type PaymentTotals = {
+  _id: { status: "paid" | "unpaid"; method: "cash" | "bank" | "mobile" | null }
+  amount: number
 }
 
 type SearchParams = Promise<{
@@ -265,6 +294,10 @@ export default async function ReportsPage({
     topMovingProducts,
     returnedProductTotals,
     recentSales,
+    dailySaleTotals,
+    dailyReturnTotals,
+    dailyExpenseTotals,
+    paymentTotals,
   ] = await Promise.all([
     Product.aggregate<ProductTotals>([
       { $match: { store: currentStore } },
@@ -491,6 +524,89 @@ export default async function ReportsPage({
       .sort({ createdAt: -1 })
       .limit(8)
       .lean<RecentSale[]>(),
+    // Daily buckets use $dateToString in UTC, which matches the business time zone.
+    Sale.aggregate<DailySaleTotals>([
+      { $match: { store: currentStore, createdAt: periodFilter } },
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+          },
+          revenue: { $sum: "$items.lineTotal" },
+          grossProfit: {
+            $sum: {
+              $subtract: [
+                "$items.lineTotal",
+                { $multiply: ["$items.basePrice", "$items.quantity"] },
+              ],
+            },
+          },
+        },
+      },
+    ]),
+    ReturnModel.aggregate<DailyReturnTotals>([
+      { $match: { store: currentStore, createdAt: periodFilter } },
+      { $unwind: "$returnItems" },
+      {
+        $lookup: {
+          from: "products",
+          localField: "returnItems.productId",
+          foreignField: "_id",
+          as: "product",
+        },
+      },
+      { $unwind: { path: "$product", preserveNullAndEmptyArrays: true } },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+          },
+          revenue: { $sum: "$returnItems.lineTotal" },
+          grossProfit: {
+            $sum: {
+              $subtract: [
+                "$returnItems.lineTotal",
+                {
+                  $multiply: [
+                    {
+                      $ifNull: [
+                        "$returnItems.basePrice",
+                        { $ifNull: ["$product.costPrice", 0] },
+                      ],
+                    },
+                    "$returnItems.quantity",
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    ]),
+    Expense.aggregate<DailyExpenseTotals>([
+      { $match: { store: currentStore, date: periodFilter } },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: "%Y-%m-%d", date: "$date" },
+          },
+          expenses: { $sum: "$amount" },
+        },
+      },
+    ]),
+    Sale.aggregate<PaymentTotals>([
+      { $match: { store: currentStore, createdAt: periodFilter } },
+      {
+        $group: {
+          _id: {
+            status: "$paymentStatus",
+            method: { $ifNull: ["$paymentMethod", null] },
+          },
+          amount: { $sum: "$totalAmount" },
+        },
+      },
+    ]),
   ])
 
   const productMap = new Map(productTotals.map((item) => [item._id, item]))
@@ -562,6 +678,69 @@ export default async function ReportsPage({
     .filter((product) => product.soldQuantity !== 0 || product.revenue !== 0)
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 8)
+
+  // Trend series: same semantics as the totals above, bucketed per business day.
+  // Net revenue subtracts returns; profit further subtracts that day's expenses.
+  const DAY_MS = 86_400_000
+  const dayCount = Math.max(
+    1,
+    Math.round((range.endExclusive.getTime() - range.from.getTime()) / DAY_MS)
+  )
+  const trendGranularity: "day" | "month" = dayCount > 92 ? "month" : "day"
+  const salesByDay = new Map(dailySaleTotals.map((item) => [item._id, item]))
+  const returnsByDay = new Map(dailyReturnTotals.map((item) => [item._id, item]))
+  const expensesByDay = new Map(
+    dailyExpenseTotals.map((item) => [item._id, item])
+  )
+  const trendBuckets = new Map<string, { revenue: number; profit: number }>()
+  for (let dayIndex = 0; dayIndex < dayCount; dayIndex++) {
+    const dayKey = formatBusinessDateInput(
+      new Date(range.from.getTime() + dayIndex * DAY_MS)
+    )
+    const bucketKey =
+      trendGranularity === "month" ? `${dayKey.slice(0, 7)}-01` : dayKey
+    const bucket = trendBuckets.get(bucketKey) ?? { revenue: 0, profit: 0 }
+    const daySales = salesByDay.get(dayKey)
+    const dayReturns = returnsByDay.get(dayKey)
+    const dayExpenses = expensesByDay.get(dayKey)
+    bucket.revenue += (daySales?.revenue ?? 0) - (dayReturns?.revenue ?? 0)
+    bucket.profit +=
+      (daySales?.grossProfit ?? 0) -
+      (dayReturns?.grossProfit ?? 0) -
+      (dayExpenses?.expenses ?? 0)
+    trendBuckets.set(bucketKey, bucket)
+  }
+  const trendPoints: TrendPoint[] = Array.from(
+    trendBuckets,
+    ([date, bucket]) => ({
+      date,
+      revenue: bucket.revenue,
+      profit: bucket.profit,
+    })
+  )
+
+  const paymentAmounts = new Map<string, number>()
+  paymentTotals.forEach((row) => {
+    const key = row._id.status === "unpaid" ? "loan" : row._id.method ?? "cash"
+    paymentAmounts.set(key, (paymentAmounts.get(key) ?? 0) + row.amount)
+  })
+  const paymentMix: PaymentMixPoint[] = [
+    { label: "Cash", key: "cash", kind: "paid" as const },
+    { label: "Bank", key: "bank", kind: "paid" as const },
+    { label: "Mobile", key: "mobile", kind: "paid" as const },
+    { label: "Loans", key: "loan", kind: "loan" as const },
+  ].map(({ label, key, kind }) => ({
+    label,
+    kind,
+    amount: paymentAmounts.get(key) ?? 0,
+  }))
+  const hasPaymentActivity = paymentMix.some((entry) => entry.amount > 0)
+  const topProductChartData = netTopMovingProducts.map((product) => ({
+    sku: product.sku,
+    name: product.name,
+    revenue: product.revenue,
+  }))
+
   const fromLabel = formatDateOnly(range.from)
   const toLabel = formatDateOnly(range.to)
   const cards = [
@@ -667,6 +846,64 @@ export default async function ReportsPage({
             </p>
           </div>
         ))}
+      </div>
+
+      <section className="space-y-3 rounded-2xl border border-border/80 bg-card p-4 shadow-sm">
+        <div>
+          <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+            Trends
+          </p>
+          <h3 className="text-lg font-semibold">Revenue &amp; Profit Over Time</h3>
+          <p className="text-sm text-muted-foreground">
+            Net revenue and profit per{" "}
+            {trendGranularity === "month" ? "month" : "day"} from {fromLabel} to{" "}
+            {toLabel}.
+          </p>
+        </div>
+        {totals.sales === 0 && totals.expenses === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No sales or expenses recorded in this period.
+          </p>
+        ) : (
+          <RevenueProfitTrendChart
+            data={trendPoints}
+            granularity={trendGranularity}
+          />
+        )}
+      </section>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <section className="space-y-3 rounded-2xl border border-border/80 bg-card p-4 shadow-sm">
+          <div>
+            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+              Product Performance
+            </p>
+            <h3 className="text-lg font-semibold">Top Products by Revenue</h3>
+          </div>
+          {topProductChartData.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No sales movement yet.
+            </p>
+          ) : (
+            <TopProductsChart data={topProductChartData} />
+          )}
+        </section>
+
+        <section className="space-y-3 rounded-2xl border border-border/80 bg-card p-4 shadow-sm">
+          <div>
+            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+              Sales Mix
+            </p>
+            <h3 className="text-lg font-semibold">Sales by Payment Type</h3>
+          </div>
+          {hasPaymentActivity ? (
+            <PaymentMixChart data={paymentMix} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No sales recorded in this period.
+            </p>
+          )}
+        </section>
       </div>
 
       <section className="space-y-3 rounded-2xl border border-border/80 bg-card p-4 shadow-sm">
