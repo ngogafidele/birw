@@ -27,14 +27,6 @@ import {
   type PaymentMixPoint,
   type TrendPoint,
 } from "@/components/reports/report-charts"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 
 type StoreKey = "store1"
 
@@ -142,33 +134,8 @@ type ReturnedProductTotals = {
   grossProfit: number
 }
 
-type RecentSale = {
-  _id: string
-  store: StoreKey
-  createdAt?: Date
-  totalAmount: number
-  items: Array<{
-    name: string
-    sku: string
-    unit: string
-    quantity: number
-  }>
-}
-
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(value)
-}
-
-function formatDateTime(date: Date | undefined) {
-  if (!date) return "-"
-
-  return formatInBusinessTime(date, {
-    month: "short",
-    day: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
 }
 
 function getSingleParam(value: string | string[] | undefined) {
@@ -293,7 +260,6 @@ export default async function ReportsPage({
     outstandingSalesTotals,
     topMovingProducts,
     returnedProductTotals,
-    recentSales,
     dailySaleTotals,
     dailyReturnTotals,
     dailyExpenseTotals,
@@ -519,11 +485,6 @@ export default async function ReportsPage({
         },
       },
     ]),
-    Sale.find({ store: currentStore, createdAt: periodFilter })
-      .select("store items totalAmount createdAt")
-      .sort({ createdAt: -1 })
-      .limit(8)
-      .lean<RecentSale[]>(),
     // Daily buckets use $dateToString in UTC, which matches the business time zone.
     Sale.aggregate<DailySaleTotals>([
       { $match: { store: currentStore, createdAt: periodFilter } },
@@ -906,153 +867,6 @@ export default async function ReportsPage({
         </section>
       </div>
 
-      <section className="space-y-3 rounded-2xl border border-border/80 bg-card p-4 shadow-sm">
-        <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-            Store Summary
-          </p>
-          <h3 className="text-lg font-semibold">
-            {STORE_LABELS[currentStore]} Performance
-          </h3>
-        </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Store</TableHead>
-              <TableHead>Revenue</TableHead>
-              <TableHead>Expenses</TableHead>
-              <TableHead>Profit</TableHead>
-              <TableHead>Sales</TableHead>
-              <TableHead>Products</TableHead>
-              <TableHead>Loans</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {storeReports.map((report, reportIndex) => (
-              <TableRow
-                key={report.store}
-                className={
-                  reportIndex % 2 === 1
-                    ? "bg-muted/60 hover:bg-muted/70"
-                    : undefined
-                }
-              >
-                <TableCell>{STORE_LABELS[report.store]}</TableCell>
-                <TableCell>{formatCurrency(report.revenue)}</TableCell>
-                <TableCell>{formatCurrency(report.expenses)}</TableCell>
-                <TableCell>{formatCurrency(report.profit)}</TableCell>
-                <TableCell>{formatNumber(report.sales)}</TableCell>
-                <TableCell>{formatNumber(report.products)}</TableCell>
-                <TableCell>{formatCurrency(report.outstanding)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </section>
-
-      <div className="grid gap-4 xl:grid-cols-2">
-        <section className="space-y-3 rounded-2xl border border-border/80 bg-card p-4 shadow-sm">
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-              Product Performance
-            </p>
-            <h3 className="text-lg font-semibold">Top Moving Products</h3>
-          </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Product</TableHead>
-                <TableHead>Sold</TableHead>
-                <TableHead>Revenue</TableHead>
-                <TableHead>Profit</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {netTopMovingProducts.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-muted-foreground">
-                    No sales movement yet.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                netTopMovingProducts.map((product, productIndex) => (
-                  <TableRow
-                    key={product.sku}
-                    className={
-                      productIndex % 2 === 1
-                        ? "bg-muted/60 hover:bg-muted/70"
-                        : undefined
-                    }
-                  >
-                    <TableCell>
-                      <p className="font-medium">{product.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {product.sku}
-                      </p>
-                    </TableCell>
-                    <TableCell>
-                      {formatNumber(product.soldQuantity)}{" "}
-                      {product.unit ?? "pcs"}
-                    </TableCell>
-                    <TableCell>{formatCurrency(product.revenue)}</TableCell>
-                    <TableCell>{formatCurrency(product.grossProfit)}</TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </section>
-
-        <section className="space-y-3 rounded-2xl border border-border/80 bg-card p-4 shadow-sm">
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-              Sales Activity
-            </p>
-            <h3 className="text-lg font-semibold">Recent Sales</h3>
-          </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Time</TableHead>
-                <TableHead>Store</TableHead>
-                <TableHead>Items</TableHead>
-                <TableHead>Total</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {recentSales.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-muted-foreground">
-                    No sales recorded yet.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                recentSales.map((sale, saleIndex) => (
-                  <TableRow
-                    key={sale._id.toString()}
-                    className={
-                      saleIndex % 2 === 1
-                        ? "bg-muted/60 hover:bg-muted/70"
-                        : undefined
-                    }
-                  >
-                    <TableCell>{formatDateTime(sale.createdAt)}</TableCell>
-                    <TableCell>{STORE_LABELS[sale.store]}</TableCell>
-                    <TableCell>
-                      <span className="whitespace-normal break-words">
-                        {sale.items
-                          .map((item) => item.name || item.sku)
-                          .join(", ")}
-                      </span>
-                    </TableCell>
-                    <TableCell>{formatCurrency(sale.totalAmount)}</TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </section>
-      </div>
     </div>
   )
 }

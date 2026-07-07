@@ -44,6 +44,7 @@ Update this file after meaningful feature work. It should let the next agent see
 - [x] Sales invoices, proformas, and outstanding statements include the closing line `Thank you for doing business with us.`
 - [x] Proformas support row-level and document-level discounts (percentage or amount) with server-computed snapshots, live form totals, detail breakdown, and PDF breakdown
 - [x] Invoice, proforma, and outstanding statement PDFs order the store identity block as name, TIN, telephone, address, email
+- [x] Reports page no longer renders the bottom Store Summary, Top Moving Products, and Recent Sales tables (charts and metric cards remain); the recent-sales query, its type, and the datetime formatter were removed with them — report math and the management report PDF are unchanged
 
 ---
 
