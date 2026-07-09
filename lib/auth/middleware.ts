@@ -27,3 +27,16 @@ export async function requireAdmin(request: NextRequest) {
   }
   return { authorized: true as const, session: result.session }
 }
+
+// Grants access to admins and managers while keeping staff out (e.g. financial statements).
+export async function requireManagerOrAdmin(request: NextRequest) {
+  const result = await requireAuth(request)
+  if (!result.authorized || !result.session) {
+    return { authorized: false as const, session: result.session }
+  }
+  const { role, isAdmin } = result.session
+  if (!isAdmin && role !== "manager") {
+    return { authorized: false as const, session: result.session }
+  }
+  return { authorized: true as const, session: result.session }
+}

@@ -264,3 +264,22 @@ Last updated: 2026-07-04
 | Event table | Reuses the local `Table`; movement badge in = `bg-emerald-50 text-emerald-700`, out = `bg-rose-50 text-rose-700`; signed change column in emerald/rose |
 
 Pattern notes: The modal is read-only and admin-only. The API (`GET /api/products/[id]/movements`) reconstructs history by merging `ProductReceipt` (in), `Return.returnItems` (in) / `replacementItems` (out), `Sale.items` incl. loans (out), and `StockAdjustment` (±), then anchors the running balance to the true `product.quantity`, surfacing any residual as an "Opening" baseline. Time ranges are derived entirely client-side from the full history (no refetch); a bounded range recomputes its own opening balance, totals, breakdown, and series so the numbers stay honest. Chart colors must stay on the `--chart-*` tokens; do not hardcode hex chart colors.
+
+---
+
+## Financial Statements
+
+Files: `components/financial-statements/financial-statements-manager.tsx`, `income-statement-view.tsx`, `balance-sheet-view.tsx`, `app/(dashboard)/financial-statements/page.tsx`
+Last updated: 2026-07-09
+
+| Property | Pattern |
+| --- | --- |
+| Access | Admin + manager only; sidebar item (lucide `FileSpreadsheet`) and page redirect staff to `/sales`; routes use `requireManagerOrAdmin` |
+| Tab toggle | `inline-flex rounded-xl border border-border/80 bg-card p-1`; each tab a `<button>` `rounded-lg px-4 py-2 text-sm font-medium`; active `bg-primary text-primary-foreground shadow-sm` (no Tabs primitive exists — use button state) |
+| Controls bar | `flex flex-wrap items-end gap-3 rounded-2xl border border-border/80 bg-card p-4 shadow-sm`; date presets are `Button size="sm" variant="outline"`; `Produce` primary; `Download PDF` `variant="outline"` (opens the `/pdf` route in a new tab) |
+| Statement rows | `<dl>` with `divide-y divide-border/70`; line rows muted label, subtotal `font-medium`, total `border-t-2 border-border text-base font-semibold` with emerald/rose value by sign |
+| Balance Check card | `rounded-2xl border p-4`; balanced (rounded diff = 0) uses `border-emerald-200 bg-emerald-50`, otherwise `border-amber-200 bg-amber-50`; shows the plain signed difference (never force-reconciled) |
+| Balance sheet layout | `grid gap-4 lg:grid-cols-2`; Assets in the left card, Liabilities + Equity stacked right; `Subtotal` = `border-t border-border pt-2 text-sm font-medium` |
+| Manual item CRUD | `Add Item` opens a `Dialog`; category via `Select` with `SelectGroup`/`SelectLabel` (Assets / Liabilities / Equity); inline `Pencil` / `Trash2` `Button size="icon-xs" variant="ghost"` on manual lines only; delete confirmed with `window.confirm` |
+
+Pattern notes: Views fetch from `/api/financial-statements/*` client-side; the initial load runs in an effect that only sets state **after** the await (state is initialized `loading: true`) to satisfy the `react-hooks/set-state-in-effect` rule — do not call `setState` synchronously in these effects. Income statement math lives in `lib/financial/income-statement.ts` and must stay identical to the Reports page. Manual balance sheet items are an append-only version history (`BalanceSheetItem`): edits/deletes write new effective-dated versions so past snapshots never change.

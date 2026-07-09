@@ -9,6 +9,7 @@ import {
   ChartColumn,
   ClipboardList,
   Clock,
+  FileSpreadsheet,
   RotateCcw,
   Wallet,
   LayoutDashboard,
@@ -41,21 +42,32 @@ const stockAdjustmentsNavItem = {
   icon: Wrench,
 }
 
+const financialStatementsNavItem = {
+  href: "/financial-statements",
+  label: "Financial Statements",
+  icon: FileSpreadsheet,
+}
+
 const bottomNavItems = [
   { href: "/reports", label: "Reports", icon: ChartColumn },
 ]
 
 export function Sidebar({ session }: { session: AuthSession }) {
   const pathname = usePathname()
+  // Financial statements are visible to admins and managers; staff keep the common set only.
+  const isManagerOrAdmin = session.isAdmin || session.role === "manager"
   const navItems = session.isAdmin
     ? [
         ...adminOnlyNavItems,
         ...commonNavItems.flatMap((item) =>
           item.href === "/outstanding" ? [item, stockAdjustmentsNavItem] : item
         ),
+        financialStatementsNavItem,
         ...bottomNavItems,
       ]
-    : commonNavItems
+    : isManagerOrAdmin
+      ? [...commonNavItems, financialStatementsNavItem]
+      : commonNavItems
 
   return (
     <aside className="w-full shrink-0 rounded-2xl border border-sidebar-border bg-sidebar/90 p-2 backdrop-blur-sm md:sticky md:top-4 md:h-fit md:w-60">

@@ -7,7 +7,7 @@ Update this file after meaningful feature work. It should let the next agent see
 ## Current Status
 
 **Phase:** Production maintenance and feature iteration  
-**Last documented:** Admin product stock monitor (movement history modal with recharts + time-range selector) and batch multi-product add
+**Last documented:** Financial Statements (Income Statement + Balance Sheet with versioned manual items and PDF export)
 **Next:** Keep context files updated after future feature changes
 
 ---
@@ -44,7 +44,9 @@ Update this file after meaningful feature work. It should let the next agent see
 - [x] Sales invoices, proformas, and outstanding statements include the closing line `Thank you for doing business with us.`
 - [x] Proformas support row-level and document-level discounts (percentage or amount) with server-computed snapshots, live form totals, detail breakdown, and PDF breakdown
 - [x] Invoice, proforma, and outstanding statement PDFs order the store identity block as name, TIN, telephone, address, email
+- [x] Return update and delete routes reconcile product stock and return records inside MongoDB transactions, with guarded negative-stock updates and post-transaction low-stock alert synchronization
 - [x] Reports page no longer renders the bottom Store Summary, Top Moving Products, and Recent Sales tables (charts and metric cards remain); the recent-sales query, its type, and the datetime formatter were removed with them — report math and the management report PDF are unchanged
+- [x] Financial Statements section (admin + manager only): Income Statement (fully auto-derived for a date range, math replicates the Reports page) and Balance Sheet (as-of snapshot). Balance sheet auto lines are reconstructed to the date — Inventory Value (stock rewound by post-date movements, valued at latest receipt cost → sale-cost → costPrice fallback), Accounts Receivable (loan totals minus payments on/before date), Retained Earnings (cumulative income statement). Manual balance-sheet items use an append-only versioned model (`BalanceSheetItem`) so edits/deletes are effective-dated and never alter past snapshots. Both statements export to PDF. Balance Check shows the plain assets − (liabilities + equity) difference; no cash is invented
 
 ---
 
@@ -54,6 +56,8 @@ Update this file after meaningful feature work. It should let the next agent see
 - Product stock is affected by sales, sale edits, sale deletion, returns, stock receiving, and stock adjustments.
 - Staff and managers may edit sales they created; administrators may edit any sale and remain the only role allowed to delete sales.
 - Low-stock alerts must stay synchronized after inventory mutations.
+- Return edits and deletions must keep product quantity changes and the return record mutation in the same transaction; guarded stock updates prevent concurrent writes from pushing stock below zero.
+- Financial Statements are admin + manager only (`requireManagerOrAdmin` on routes, role check + redirect on the page). Income Statement math in `lib/financial/income-statement.ts` must stay identical to the Reports page (revenue net of returns, COGS net of returned-goods cost, sales by `createdAt`, expenses by `date`); this duplication is intentional and must be kept in sync. Balance Sheet reconstructs Inventory Value and Accounts Receivable to the as-of date (no live point-in-time snapshot exists); inventory is valued at latest receipt `unitCost` (sale `basePrice` then `costPrice` fallback). `BalanceSheetItem` is append-only versioned — edits/deletes insert new effective-dated versions; never mutate or hard-delete a version. Existing schemas (`Product`, `Sale`, `Expense`, `ProductReceipt`, `StockAdjustment`, `Return`) are read-only for this feature.
 - Reports subtract returns from sales revenue and gross profit.
 - Unpaid sales are loans; they are not a separate ledger.
 - Loan settlement does not alter stock because stock moved when the sale was created.
