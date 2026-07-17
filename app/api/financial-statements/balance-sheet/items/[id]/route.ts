@@ -2,6 +2,7 @@
 // The [id] segment is the item's stable groupId shared across all its versions.
 import { NextRequest, NextResponse } from "next/server"
 import mongoose from "mongoose"
+import { ZodError } from "zod"
 import { connectToDatabase } from "@/lib/db/connection"
 import { requireManagerOrAdmin } from "@/lib/auth/middleware"
 import { resolveStoreFromRequest } from "@/lib/auth/session"
@@ -83,9 +84,17 @@ export async function PUT(
       },
     })
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to update balance sheet item"
-    return NextResponse.json({ success: false, error: message }, { status: 400 })
+    if (error instanceof ZodError) {
+      return NextResponse.json(
+        { success: false, error: "Check the item details and try again" },
+        { status: 400 }
+      )
+    }
+    console.error("[Update Balance Sheet Item Error]", error)
+    return NextResponse.json(
+      { success: false, error: "Failed to update balance sheet item" },
+      { status: 500 }
+    )
   }
 }
 
@@ -162,8 +171,16 @@ export async function DELETE(
 
     return NextResponse.json({ success: true })
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to delete balance sheet item"
-    return NextResponse.json({ success: false, error: message }, { status: 400 })
+    if (error instanceof ZodError || error instanceof SyntaxError) {
+      return NextResponse.json(
+        { success: false, error: "Check the effective date and try again" },
+        { status: 400 }
+      )
+    }
+    console.error("[Delete Balance Sheet Item Error]", error)
+    return NextResponse.json(
+      { success: false, error: "Failed to delete balance sheet item" },
+      { status: 500 }
+    )
   }
 }

@@ -7,6 +7,7 @@ import { requireAuth } from "@/lib/auth/middleware"
 import { resolveStoreFromRequest } from "@/lib/auth/session"
 import { CreateReturnSchema } from "@/lib/db/validators/return"
 import { syncLowStockAlert } from "@/lib/db/alerts"
+import { recordReturnSnapshot } from "@/lib/financial/return-snapshot-history"
 
 type ProductDocumentLike = {
   _id: { toString(): string }
@@ -157,6 +158,12 @@ export async function POST(request: NextRequest) {
           { session: dbSession }
         )
         createdReturn = createdReturns[0]
+        await recordReturnSnapshot(
+          createdReturn,
+          "created",
+          createdReturn.createdAt ? new Date(createdReturn.createdAt) : new Date(),
+          dbSession
+        )
       })
     } finally {
       await dbSession.endSession()

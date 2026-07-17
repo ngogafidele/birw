@@ -8,6 +8,10 @@ import { requireAuth } from "@/lib/auth/middleware"
 import { resolveStoreFromRequest, type StoreKey } from "@/lib/auth/session"
 import { UpdateReturnSchema } from "@/lib/db/validators/return"
 import { syncLowStockAlert } from "@/lib/db/alerts"
+import {
+  ensureInitialReturnSnapshot,
+  recordReturnSnapshot,
+} from "@/lib/financial/return-snapshot-history"
 
 type ReturnItemInput = {
   productId: string
@@ -95,6 +99,7 @@ export async function PUT(
     let updates: StockUpdate[] = []
     let updatedReturn
 
+    const editEffectiveAt = new Date()
     const dbSession = await db.startSession()
     try {
       await dbSession.withTransaction(async () => {
@@ -104,6 +109,7 @@ export async function PUT(
         if (!existingReturn) {
           throw new RouteError("Return not found", 404)
         }
+        await ensureInitialReturnSnapshot(existingReturn, dbSession)
 
         const returnItemsInput = payload.returnItems
           ? payload.returnItems.map((item: ReturnItemInput) => ({
@@ -214,6 +220,8 @@ export async function PUT(
         if (!updatedReturn) {
           throw new RouteError("Return not found", 404)
         }
+
+        await recordReturnSnapshot(updatedReturn, "edited", editEffectiveAt, dbSession)
       })
     } finally {
       await dbSession.endSession()
@@ -288,6 +296,9 @@ export async function DELETE(
         if (!existingReturn) {
           throw new RouteError("Return not found", 404)
         }
+
+        await ensureInitialReturnSnapshot(existingReturn, dbSession)
+        await recordReturnSnapshot(existingReturn, "deleted", new Date(), dbSession)
 
         const productIds = Array.from(
           new Set([

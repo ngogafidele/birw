@@ -1,6 +1,7 @@
 "use client"
 
-// Balance sheet view: an "as of" date, reconstructed auto lines, manual item CRUD, balance check.
+// Balance sheet view: an "as of" date, reconstructed auto lines, manual item CRUD,
+// balance check, and an optional comparison date rendered as a muted second column.
 import { useCallback, useEffect, useState } from "react"
 import { Pencil, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -51,6 +52,7 @@ type BalanceSheet = {
   totalAssets: number
   totalLiabilitiesAndEquity: number
   balanceDifference: number
+  inventoryWarnings?: string[]
 }
 
 type ManualItem = {
@@ -122,12 +124,20 @@ function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback
 }
 
+// Maps a comparison sheet's lines to amounts keyed by manual-item id or auto-line label.
+function buildCompareMap(lines: BalanceSheetLine[]) {
+  return new Map(lines.map((line) => [line.id ?? line.label, line.amount]))
+}
+
 function LineRows({
   lines,
+  compare,
   onEdit,
   onDelete,
 }: {
   lines: BalanceSheetLine[]
+  // Comparison amounts keyed by line id (manual) or label (auto); null = comparison off.
+  compare?: Map<string, number> | null
   onEdit: (id: string) => void
   onDelete: (id: string) => void
 }) {
@@ -150,6 +160,13 @@ function LineRows({
             ) : null}
           </dt>
           <dd className="flex items-center gap-2 text-sm tabular-nums">
+            {compare ? (
+              <span className="text-muted-foreground">
+                {compare.has(line.id ?? line.label)
+                  ? formatCurrency(compare.get(line.id ?? line.label) as number)
+                  : "—"}
+              </span>
+            ) : null}
             {formatCurrency(line.amount)}
             {line.source === "manual" && line.id ? (
               <span className="flex items-center gap-1">
@@ -180,11 +197,39 @@ function LineRows({
   )
 }
 
-function Subtotal({ label, amount }: { label: string; amount: number }) {
+function Subtotal({
+  label,
+  amount,
+  compareAmount,
+}: {
+  label: string
+  amount: number
+  compareAmount?: number
+}) {
+  const hasCompare = typeof compareAmount === "number"
+  const delta = hasCompare ? amount - compareAmount : 0
   return (
-    <div className="mt-1 flex items-center justify-between border-t border-border pt-2 text-sm font-medium">
+    <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-2 text-sm font-medium">
       <span>{label}</span>
-      <span className="tabular-nums">{formatCurrency(amount)}</span>
+      <span className="flex items-center gap-2 tabular-nums">
+        {hasCompare ? (
+          <span className="font-normal text-muted-foreground">
+            {formatCurrency(compareAmount)}
+          </span>
+        ) : null}
+        {formatCurrency(amount)}
+        {hasCompare ? (
+          <span
+            className={cn(
+              "text-xs font-normal",
+              delta >= 0 ? "text-emerald-600" : "text-rose-600"
+            )}
+          >
+            {delta >= 0 ? "+" : ""}
+            {formatCurrency(delta)}
+          </span>
+        ) : null}
+      </span>
     </div>
   )
 }
@@ -192,7 +237,9 @@ function Subtotal({ label, amount }: { label: string; amount: number }) {
 export function BalanceSheetView() {
   const [initialAsOf] = useState(todayInput)
   const [asOf, setAsOf] = useState(initialAsOf)
+  const [compareAsOf, setCompareAsOf] = useState("")
   const [sheet, setSheet] = useState<BalanceSheet | null>(null)
+  const [compareSheet, setCompareSheet] = useState<BalanceSheet | null>(null)
   const [items, setItems] = useState<ManualItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -229,18 +276,21 @@ export function BalanceSheetView() {
   }, [])
 
   const load = useCallback(
-    async (asOfInput: string) => {
+    async (asOfInput: string, compareInput?: string) => {
       setLoading(true)
       setError(null)
       try {
-        const [nextSheet, nextItems] = await Promise.all([
+        const [nextSheet, nextItems, nextCompare] = await Promise.all([
           fetchSheet(asOfInput),
           fetchItems(asOfInput),
+          compareInput ? fetchSheet(compareInput) : Promise.resolve(null),
         ])
         setSheet(nextSheet)
         setItems(nextItems)
+        setCompareSheet(nextCompare)
       } catch (loadError) {
         setSheet(null)
+        setCompareSheet(null)
         setItems([])
         setError(errorMessage(loadError, "Failed to load balance sheet"))
       } finally {
@@ -332,7 +382,7 @@ export function BalanceSheetView() {
         throw new Error(payload.error ?? "Failed to save item")
       }
       setDialogOpen(false)
-      await load(asOf)
+      await load(asOf, compareAsOf || undefined)
     } catch (saveError) {
       setFormError(errorMessage(saveError, "Failed to save item"))
     } finally {
@@ -347,13 +397,17 @@ export function BalanceSheetView() {
     try {
       const response = await fetch(
         `/api/financial-statements/balance-sheet/items/${groupId}`,
-        { method: "DELETE" }
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ effectiveDate: asOf }),
+        }
       )
       const payload = (await response.json()) as { success: boolean; error?: string }
       if (!response.ok || !payload.success) {
         throw new Error(payload.error ?? "Failed to delete item")
       }
-      await load(asOf)
+      await load(asOf, compareAsOf || undefined)
     } catch (deleteError) {
       setError(errorMessage(deleteError, "Failed to delete item"))
     }
@@ -369,6 +423,19 @@ export function BalanceSheetView() {
 
   const balanced = sheet ? Math.round(sheet.balanceDifference) === 0 : false
 
+  // Comparison amounts keyed by manual-item id or auto-line label. Plain derived
+  // value: the React Compiler memoizes it, and a manual useMemo here trips the
+  // preserve-manual-memoization rule.
+  const compareMaps = compareSheet
+    ? {
+        assetsCurrent: buildCompareMap(compareSheet.assets.current),
+        assetsFixed: buildCompareMap(compareSheet.assets.fixed),
+        liabilitiesCurrent: buildCompareMap(compareSheet.liabilities.current),
+        liabilitiesLongTerm: buildCompareMap(compareSheet.liabilities.longTerm),
+        equity: buildCompareMap(compareSheet.equity.lines),
+      }
+    : null
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3 rounded-2xl border border-border/80 bg-card p-4 shadow-sm">
@@ -381,7 +448,19 @@ export function BalanceSheetView() {
               onChange={(event) => setAsOf(event.target.value)}
             />
           </label>
-          <Button type="button" onClick={() => load(asOf)} disabled={loading}>
+          <label className="grid gap-1 text-sm">
+            Compare To (optional)
+            <Input
+              type="date"
+              value={compareAsOf}
+              onChange={(event) => setCompareAsOf(event.target.value)}
+            />
+          </label>
+          <Button
+            type="button"
+            onClick={() => load(asOf, compareAsOf || undefined)}
+            disabled={loading}
+          >
             {loading ? "Loading…" : "Produce"}
           </Button>
           <Button
@@ -439,6 +518,25 @@ export function BalanceSheetView() {
             </div>
           </div>
 
+          {sheet.inventoryWarnings && sheet.inventoryWarnings.length > 0 ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+              <p className="font-medium">Inventory history warning</p>
+              <p>
+                Reconstructed stock went negative for:{" "}
+                {sheet.inventoryWarnings.join(", ")}. These products are excluded
+                from the inventory value — review their receipts, sales, and
+                adjustments for this period.
+              </p>
+            </div>
+          ) : null}
+
+          {compareSheet ? (
+            <p className="text-xs text-muted-foreground">
+              Muted figures show {compareSheet.asOf}; deltas are {sheet.asOf} minus{" "}
+              {compareSheet.asOf}.
+            </p>
+          ) : null}
+
           <div className="grid gap-4 lg:grid-cols-2">
             <section className="space-y-4 rounded-2xl border border-border/80 bg-card p-6 shadow-sm">
               <h3 className="text-lg font-semibold">Assets</h3>
@@ -448,6 +546,7 @@ export function BalanceSheetView() {
                 </p>
                 <LineRows
                   lines={sheet.assets.current}
+                  compare={compareMaps?.assetsCurrent}
                   onEdit={openEdit}
                   onDelete={handleDelete}
                 />
@@ -458,11 +557,16 @@ export function BalanceSheetView() {
                 </p>
                 <LineRows
                   lines={sheet.assets.fixed}
+                  compare={compareMaps?.assetsFixed}
                   onEdit={openEdit}
                   onDelete={handleDelete}
                 />
               </div>
-              <Subtotal label="Total Assets" amount={sheet.assets.total} />
+              <Subtotal
+                label="Total Assets"
+                amount={sheet.assets.total}
+                compareAmount={compareSheet?.assets.total}
+              />
             </section>
 
             <div className="space-y-4">
@@ -474,6 +578,7 @@ export function BalanceSheetView() {
                   </p>
                   <LineRows
                     lines={sheet.liabilities.current}
+                    compare={compareMaps?.liabilitiesCurrent}
                     onEdit={openEdit}
                     onDelete={handleDelete}
                   />
@@ -484,6 +589,7 @@ export function BalanceSheetView() {
                   </p>
                   <LineRows
                     lines={sheet.liabilities.longTerm}
+                    compare={compareMaps?.liabilitiesLongTerm}
                     onEdit={openEdit}
                     onDelete={handleDelete}
                   />
@@ -491,6 +597,7 @@ export function BalanceSheetView() {
                 <Subtotal
                   label="Total Liabilities"
                   amount={sheet.liabilities.total}
+                  compareAmount={compareSheet?.liabilities.total}
                 />
               </section>
 
@@ -498,15 +605,21 @@ export function BalanceSheetView() {
                 <h3 className="text-lg font-semibold">Equity</h3>
                 <LineRows
                   lines={sheet.equity.lines}
+                  compare={compareMaps?.equity}
                   onEdit={openEdit}
                   onDelete={handleDelete}
                 />
-                <Subtotal label="Total Equity" amount={sheet.equity.total} />
+                <Subtotal
+                  label="Total Equity"
+                  amount={sheet.equity.total}
+                  compareAmount={compareSheet?.equity.total}
+                />
               </section>
 
               <Subtotal
                 label="Total Liabilities + Equity"
                 amount={sheet.totalLiabilitiesAndEquity}
+                compareAmount={compareSheet?.totalLiabilitiesAndEquity}
               />
             </div>
           </div>

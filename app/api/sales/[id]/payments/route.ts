@@ -6,6 +6,10 @@ import { resolveStoreFromRequest } from "@/lib/auth/session"
 import { connectToDatabase } from "@/lib/db/connection"
 import { Invoice } from "@/lib/db/models/Invoice"
 import { Sale } from "@/lib/db/models/Sale"
+import {
+  ensureInitialSaleSnapshot,
+  recordSaleSnapshot,
+} from "@/lib/financial/sale-snapshot-history"
 
 const LoanPaymentSchema = z
   .object({
@@ -19,12 +23,25 @@ type LoanPayment = {
   amount?: number
 }
 
+// Sentinel for a concurrent update racing this payment (sale settled/edited mid-flight).
+class PaymentConflictError extends Error {
+  constructor() {
+    super("Failed to record payment")
+  }
+}
+
 type LoanSaleForPayment = {
   _id: { toString(): string }
+  store: string
+  items: unknown[]
   totalAmount: number
+  paymentStatus?: "paid" | "unpaid"
+  paymentMethod?: "cash" | "bank" | "mobile"
   amountPaid?: number
   remainingBalance?: number
   payments?: LoanPayment[]
+  createdAt?: Date
+  createdBy: unknown
   customer?: {
     name?: string
     phone?: string
@@ -82,7 +99,7 @@ export async function POST(
     const { id } = await context.params
     const payload = LoanPaymentSchema.parse(await request.json())
 
-    await connectToDatabase()
+    const db = await connectToDatabase()
     const sale = await Sale.findOne({
       _id: id,
       store,
@@ -127,12 +144,13 @@ export async function POST(
           }
         : undefined
 
+    const paidAt = new Date()
     const update = {
       $push: {
         payments: {
           amount,
           paymentMethod: payload.paymentMethod,
-          paidAt: new Date(),
+          paidAt,
           receivedBy: session.userId,
           notes: payload.notes?.trim() ?? "",
         },
@@ -153,21 +171,42 @@ export async function POST(
       ...(isSettled ? { $unset: { outstanding: "" } } : {}),
     }
 
-    const updatedSale = await Sale.findOneAndUpdate(
-      { _id: sale._id, store, paymentStatus: "unpaid" },
-      update,
-      { new: true }
-    )
+    // The payment, invoice status, and sale snapshot must land together — a payment
+    // persisted without its snapshot would freeze the loan as fully outstanding on
+    // every backdated balance sheet.
+    let updatedSale: LoanSaleForPayment | null = null
+    const dbSession = await db.startSession()
+    try {
+      await dbSession.withTransaction(async () => {
+        await ensureInitialSaleSnapshot(sale, dbSession)
 
-    if (!updatedSale) {
-      return NextResponse.json(
-        { success: false, error: "Failed to record payment" },
-        { status: 409 }
-      )
-    }
+        updatedSale = await Sale.findOneAndUpdate(
+          { _id: sale._id, store, paymentStatus: "unpaid" },
+          update,
+          { new: true, session: dbSession }
+        ).lean<LoanSaleForPayment | null>()
 
-    if (isSettled) {
-      await Invoice.updateOne({ saleId: sale._id, store }, { status: "paid" })
+        if (!updatedSale) {
+          throw new PaymentConflictError()
+        }
+
+        if (isSettled) {
+          await Invoice.updateOne(
+            { saleId: sale._id, store },
+            { status: "paid" },
+            { session: dbSession }
+          )
+        }
+
+        await recordSaleSnapshot(
+          updatedSale,
+          isSettled ? "settled" : "payment",
+          paidAt,
+          dbSession
+        )
+      })
+    } finally {
+      await dbSession.endSession()
     }
 
     return NextResponse.json({ success: true, data: updatedSale })
@@ -176,6 +215,12 @@ export async function POST(
       return NextResponse.json(
         { success: false, error: "Invalid payment details." },
         { status: 400 }
+      )
+    }
+    if (error instanceof PaymentConflictError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 409 }
       )
     }
 

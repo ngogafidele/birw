@@ -1,22 +1,33 @@
 // Computes the balance sheet as of a date: reconstructed auto lines plus manual items.
 //
 // Auto lines are reconstructed to the as-of date (no live point-in-time snapshot exists):
+//   - Cash & Bank: derived from recorded money flows (collections minus purchases,
+//     expenses, and net refunds) — see lib/financial/cash-position.ts.
 //   - Inventory Value: each product's quantity is rewound from its current level by removing
 //     stock movements dated after the as-of date (receipts, sales, returns, replacements,
-//     adjustments), matching the reconstruction in app/api/products/[id]/movements. On-hand
-//     units are valued at the latest receipt unitCost on/before the date, falling back to the
-//     latest sale cost snapshot, then the product's current costPrice.
-//   - Accounts Receivable: for each loan sale created on/before the date, totalAmount minus
-//     payments received on/before the date (floored at zero).
-//   - Retained Earnings: cumulative net profit through the date (the income statement formula).
+//     adjustments), matching the reconstruction in app/api/products/[id]/movements. Sale and
+//     return movements replay the immutable snapshot ledger so later edits/deletes cannot
+//     shift history. On-hand units are valued at the weighted-average purchase cost of
+//     receipts on/before the date, falling back to the latest sale cost snapshot, then the
+//     product's current costPrice.
+//   - Accounts Receivable: outstanding loan balances rewound from dated payment history
+//     (snapshot-aware).
+//   - Equity: Retained Earnings (net profit through the prior year-end) plus Current Year
+//     Earnings (net profit for the as-of year to date), both via the income statement formula.
 import { Product } from "@/lib/db/models/Product"
-import { Sale } from "@/lib/db/models/Sale"
-import { ReturnModel } from "@/lib/db/models/Return"
 import { ProductReceipt } from "@/lib/db/models/ProductReceipt"
 import { StockAdjustment } from "@/lib/db/models/StockAdjustment"
 import { BalanceSheetItem } from "@/lib/db/models/BalanceSheetItem"
 import type { StoreKey } from "@/lib/auth/session"
 import { computeIncomeStatement } from "@/lib/financial/income-statement"
+import { computeCashPosition } from "@/lib/financial/cash-position"
+import {
+  computeSnapshotAwareAccountsReceivable,
+  computeSnapshotAwareSalesOutAfter,
+  latestSnapshotAwareSaleCosts,
+} from "@/lib/financial/sale-snapshot-reporting"
+import { computeSnapshotAwareReturnFlowsAfter } from "@/lib/financial/return-snapshot-reporting"
+import { parseBusinessDateInput } from "@/lib/utils/time"
 
 export type BalanceSheetCategory =
   | "current_asset"
@@ -50,6 +61,9 @@ export type BalanceSheet = {
   totalLiabilitiesAndEquity: number
   // Positive => assets exceed liabilities + equity; shown plainly rather than forced to zero.
   balanceDifference: number
+  // Product names whose reconstructed as-of quantity went negative — a sign the
+  // movement history is inconsistent; the value is floored at zero for those.
+  inventoryWarnings: string[]
 }
 
 // Manual lines grouped by category, resolved from the versioned item history.
@@ -126,12 +140,18 @@ export function manualItemsToLines(
   return grouped
 }
 
-type ProductRow = { _id: unknown; quantity: number; costPrice: number }
+type ProductRow = { _id: unknown; name: string; quantity: number; costPrice: number }
 type IdQtyAgg = { _id: unknown; qty: number }
-type IdCostAgg = { _id: unknown; unitCost: number }
+type IdWacAgg = { _id: unknown; totalQty: number; totalCost: number }
 
 function keyOf(id: unknown) {
   return String(id)
+}
+
+type InventoryValuation = {
+  total: number
+  // Products whose reconstructed quantity went negative (inconsistent history).
+  negativeStockProducts: string[]
 }
 
 // Reconstructs total inventory value at the as-of cutoff (movements dated >= endExclusive
@@ -139,142 +159,97 @@ function keyOf(id: unknown) {
 async function computeInventoryValue(
   store: StoreKey,
   endExclusive: Date
-): Promise<number> {
+): Promise<InventoryValuation> {
   const [
     products,
     receiptsAfter,
-    salesAfter,
-    returnsInAfter,
-    replacementsOutAfter,
+    salesOutAfterMap,
+    returnFlowsAfter,
     adjustmentsAfter,
-    latestReceiptCost,
-    latestSaleCost,
+    receiptWac,
+    saleCostMap,
   ] = await Promise.all([
-    Product.find({ store }).select("_id quantity costPrice").lean<ProductRow[]>(),
+    Product.find({ store })
+      .select("_id name quantity costPrice")
+      .lean<ProductRow[]>(),
     // Receipts after the date came IN after the snapshot -> subtract.
     ProductReceipt.aggregate<IdQtyAgg>([
       { $match: { store, receivedAt: { $gte: endExclusive } } },
       { $group: { _id: "$productId", qty: { $sum: "$quantity" } } },
     ]),
-    // Sales after the date went OUT after the snapshot -> add back.
-    Sale.aggregate<IdQtyAgg>([
-      { $match: { store, createdAt: { $gte: endExclusive } } },
-      { $unwind: "$items" },
-      { $group: { _id: "$items.productId", qty: { $sum: "$items.quantity" } } },
-    ]),
-    // Returned goods came IN after the snapshot -> subtract.
-    ReturnModel.aggregate<IdQtyAgg>([
-      { $match: { store, createdAt: { $gte: endExclusive } } },
-      { $unwind: "$returnItems" },
-      {
-        $group: { _id: "$returnItems.productId", qty: { $sum: "$returnItems.quantity" } },
-      },
-    ]),
-    // Replacements issued went OUT after the snapshot -> add back.
-    ReturnModel.aggregate<IdQtyAgg>([
-      { $match: { store, createdAt: { $gte: endExclusive } } },
-      { $unwind: "$replacementItems" },
-      {
-        $group: {
-          _id: "$replacementItems.productId",
-          qty: { $sum: "$replacementItems.quantity" },
-        },
-      },
-    ]),
+    // Sale snapshot deltas after the date went OUT after the snapshot -> add back.
+    computeSnapshotAwareSalesOutAfter(store, endExclusive),
+    // Return snapshot deltas after the date: returned goods came IN -> subtract;
+    // replacements issued went OUT -> add back.
+    computeSnapshotAwareReturnFlowsAfter(store, endExclusive),
     // Adjustments after the date (signed) -> subtract their net change.
     StockAdjustment.aggregate<IdQtyAgg>([
       { $match: { store, createdAt: { $gte: endExclusive } } },
       { $group: { _id: "$productId", qty: { $sum: "$quantityChange" } } },
     ]),
-    // Latest receipt unit cost on/before the date.
-    ProductReceipt.aggregate<IdCostAgg>([
+    // Weighted-average purchase cost across all receipts on/before the date.
+    ProductReceipt.aggregate<IdWacAgg>([
       { $match: { store, receivedAt: { $lt: endExclusive } } },
-      { $sort: { receivedAt: 1, createdAt: 1 } },
-      { $group: { _id: "$productId", unitCost: { $last: "$unitCost" } } },
+      {
+        $group: {
+          _id: "$productId",
+          totalQty: { $sum: "$quantity" },
+          totalCost: { $sum: { $multiply: ["$unitCost", "$quantity"] } },
+        },
+      },
     ]),
-    // Fallback: latest sale cost snapshot on/before the date.
-    Sale.aggregate<IdCostAgg>([
-      { $match: { store, createdAt: { $lt: endExclusive } } },
-      { $unwind: "$items" },
-      { $sort: { createdAt: 1 } },
-      { $group: { _id: "$items.productId", unitCost: { $last: "$items.basePrice" } } },
-    ]),
+    latestSnapshotAwareSaleCosts(store, endExclusive),
   ])
 
   const receiptsAfterMap = new Map(receiptsAfter.map((r) => [keyOf(r._id), r.qty]))
-  const salesAfterMap = new Map(salesAfter.map((r) => [keyOf(r._id), r.qty]))
-  const returnsInMap = new Map(returnsInAfter.map((r) => [keyOf(r._id), r.qty]))
-  const replacementsOutMap = new Map(
-    replacementsOutAfter.map((r) => [keyOf(r._id), r.qty])
-  )
+  const returnsInMap = returnFlowsAfter.returnsInAfter
+  const replacementsOutMap = returnFlowsAfter.replacementsOutAfter
   const adjustmentsMap = new Map(adjustmentsAfter.map((r) => [keyOf(r._id), r.qty]))
   const receiptCostMap = new Map(
-    latestReceiptCost.map((r) => [keyOf(r._id), r.unitCost])
+    receiptWac
+      .filter((r) => r.totalQty > 0)
+      .map((r) => [keyOf(r._id), r.totalCost / r.totalQty])
   )
-  const saleCostMap = new Map(latestSaleCost.map((r) => [keyOf(r._id), r.unitCost]))
 
   let total = 0
+  const negativeStockProducts: string[] = []
   for (const product of products) {
     const id = keyOf(product._id)
     const inAfter =
       (receiptsAfterMap.get(id) ?? 0) + (returnsInMap.get(id) ?? 0)
     const outAfter =
-      (salesAfterMap.get(id) ?? 0) + (replacementsOutMap.get(id) ?? 0)
+      (salesOutAfterMap.get(id) ?? 0) + (replacementsOutMap.get(id) ?? 0)
     const netAfter = inAfter - outAfter + (adjustmentsMap.get(id) ?? 0)
     const quantityAtDate = product.quantity - netAfter
-    if (quantityAtDate <= 0) continue
+    if (quantityAtDate < 0) {
+      // Inconsistent movement history — surface it instead of silently skipping.
+      negativeStockProducts.push(product.name)
+      continue
+    }
+    if (quantityAtDate === 0) continue
 
     const unitCost =
       receiptCostMap.get(id) ?? saleCostMap.get(id) ?? product.costPrice ?? 0
     total += quantityAtDate * unitCost
   }
 
-  return total
+  return { total, negativeStockProducts }
 }
 
-type ArAgg = { ar: number }
-
-// Sums outstanding loan balances as of the date from payment history.
+// Sums outstanding loan balances as of the date from the snapshot ledger.
+//
+// A sale is a receivable candidate when its as-of snapshot is still an open loan
+// (`outstanding` present) OR has recorded at least one dated installment payment — the
+// balance is rewound from those dated payments, so a loan collected after the as-of date
+// still shows its historical balance. Every settlement path (installments and the admin
+// "mark paid in full" PATCH) now records a dated payment, so new settlements always
+// reconstruct. Known gap: loans settled before the snapshot ledger existed carry no dated
+// payment and are omitted for as-of dates preceding their (unknown) settlement.
 async function computeAccountsReceivable(
   store: StoreKey,
   endExclusive: Date
 ): Promise<number> {
-  const result = await Sale.aggregate<ArAgg>([
-    {
-      $match: {
-        store,
-        outstanding: { $ne: null },
-        createdAt: { $lt: endExclusive },
-      },
-    },
-    {
-      $addFields: {
-        paidAsOf: {
-          $sum: {
-            $map: {
-              input: {
-                $filter: {
-                  input: { $ifNull: ["$payments", []] },
-                  as: "p",
-                  cond: { $lt: ["$$p.paidAt", endExclusive] },
-                },
-              },
-              as: "p",
-              in: "$$p.amount",
-            },
-          },
-        },
-      },
-    },
-    {
-      $addFields: {
-        balance: { $max: [0, { $subtract: ["$totalAmount", "$paidAsOf"] }] },
-      },
-    },
-    { $group: { _id: null, ar: { $sum: "$balance" } } },
-  ])
-
-  return result[0]?.ar ?? 0
+  return computeSnapshotAwareAccountsReceivable(store, endExclusive)
 }
 
 function sumLines(lines: BalanceSheetLine[]) {
@@ -293,22 +268,49 @@ export async function computeBalanceSheet(
   store: StoreKey,
   { endExclusive, asOfInput, manual }: BalanceSheetInput
 ): Promise<BalanceSheet> {
-  const [inventoryValue, accountsReceivable, income, resolvedManual] =
-    await Promise.all([
-      computeInventoryValue(store, endExclusive),
-      computeAccountsReceivable(store, endExclusive),
-      computeIncomeStatement(store, { endExclusive }),
-      manual
-        ? Promise.resolve(manual)
-        : resolveManualItems(store, endExclusive).then(manualItemsToLines),
-    ])
+  // Fiscal year = calendar year in business time; split equity into prior-year
+  // retained earnings and current-year earnings at the year boundary.
+  const asOfYear = Number(asOfInput.slice(0, 4))
+  const yearStart = Number.isFinite(asOfYear)
+    ? parseBusinessDateInput(`${asOfInput.slice(0, 4)}-01-01`)
+    : null
+
+  const [
+    inventory,
+    accountsReceivable,
+    cashPosition,
+    retainedIncome,
+    currentYearIncome,
+    resolvedManual,
+  ] = await Promise.all([
+    computeInventoryValue(store, endExclusive),
+    computeAccountsReceivable(store, endExclusive),
+    computeCashPosition(store, endExclusive),
+    // Net profit through the prior year-end (cumulative when the split is unavailable).
+    computeIncomeStatement(store, {
+      endExclusive: yearStart ?? endExclusive,
+    }),
+    // Net profit for the as-of year to date (null yearStart folds into retained).
+    yearStart
+      ? computeIncomeStatement(store, { from: yearStart, endExclusive })
+      : Promise.resolve(null),
+    manual
+      ? Promise.resolve(manual)
+      : resolveManualItems(store, endExclusive).then(manualItemsToLines),
+  ])
 
   const currentAssets: BalanceSheetLine[] = [
     {
-      label: "Inventory Value",
-      amount: inventoryValue,
+      label: "Cash & Bank",
+      amount: cashPosition,
       source: "auto",
-      note: "Reconstructed on-hand stock valued at latest receipt cost",
+      note: "Collections minus purchases, expenses, and refunds; record owner capital as manual items",
+    },
+    {
+      label: "Inventory Value",
+      amount: inventory.total,
+      source: "auto",
+      note: "Reconstructed on-hand stock at weighted-average purchase cost",
     },
     {
       label: "Accounts Receivable",
@@ -326,10 +328,22 @@ export async function computeBalanceSheet(
   const equityLines: BalanceSheetLine[] = [
     {
       label: "Retained Earnings",
-      amount: income.netProfit,
+      amount: retainedIncome.netProfit,
       source: "auto",
-      note: "Cumulative net profit through date",
+      note: yearStart
+        ? `Net profit through ${asOfYear - 1}-12-31`
+        : "Cumulative net profit through date",
     },
+    ...(currentYearIncome
+      ? [
+          {
+            label: "Current Year Earnings",
+            amount: currentYearIncome.netProfit,
+            source: "auto" as const,
+            note: `Net profit for ${asOfYear} through date`,
+          },
+        ]
+      : []),
     ...resolvedManual.equity,
   ]
 
@@ -355,5 +369,6 @@ export async function computeBalanceSheet(
     totalAssets: assetsTotal,
     totalLiabilitiesAndEquity,
     balanceDifference: assetsTotal - totalLiabilitiesAndEquity,
+    inventoryWarnings: inventory.negativeStockProducts,
   }
 }

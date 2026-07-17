@@ -8,6 +8,7 @@ import { resolveStoreFromRequest } from "@/lib/auth/session"
 import { CreateSaleSchema } from "@/lib/db/validators/sale"
 import { syncLowStockAlert } from "@/lib/db/alerts"
 import { parseBusinessDateInput } from "@/lib/utils/time"
+import { recordSaleSnapshot } from "@/lib/financial/sale-snapshot-history"
 
 export async function GET(request: NextRequest) {
   try {
@@ -203,6 +204,12 @@ export async function POST(request: NextRequest) {
           { session: dbSession }
         )
         sale = createdSales[0]
+        await recordSaleSnapshot(
+          sale,
+          "created",
+          sale.createdAt ? new Date(sale.createdAt) : new Date(),
+          dbSession
+        )
 
         if (customer.name || customer.phone) {
           await Sale.collection.updateOne(

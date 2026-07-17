@@ -10,6 +10,10 @@ import { resolveStoreFromRequest } from "@/lib/auth/session"
 import { syncLowStockAlert } from "@/lib/db/alerts"
 import { UpdateSaleSchema } from "@/lib/db/validators/sale"
 import { parseBusinessDateInput } from "@/lib/utils/time"
+import {
+  ensureInitialSaleSnapshot,
+  recordSaleSnapshot,
+} from "@/lib/financial/sale-snapshot-history"
 
 type SaleItemForRestock = {
   productId: { toString(): string }
@@ -40,6 +44,13 @@ type ProductForEdit = {
 
 type ExistingLoanPayment = {
   amount?: number
+}
+
+// Sentinel for a sale that vanished between the pre-read and the settlement write.
+class SaleNotFoundError extends Error {
+  constructor() {
+    super("Sale not found")
+  }
 }
 
 function addQuantity(map: Map<string, number>, productId: string, quantity: number) {
@@ -198,7 +209,7 @@ export async function PATCH(
     }
 
     // Collection settles the receivable only; inventory moved at sale creation.
-    await connectToDatabase()
+    const db = await connectToDatabase()
     const existingSale = await Sale.findOne({ _id: id, store })
     if (!existingSale) {
       return NextResponse.json(
@@ -213,35 +224,84 @@ export async function PATCH(
           phone: existingSale.outstanding.customerPhone ?? "",
         }
       : null
-    const sale = await Sale.findOneAndUpdate(
-      { _id: id, store },
-      {
-        paymentStatus: "paid",
-        paymentMethod: payload.paymentMethod,
-        remainingBalance: 0,
-        amountPaid: existingSale.totalAmount,
-        ...(customerFromOutstanding && !existingSale.customer
-          ? { customer: customerFromOutstanding }
-          : {}),
-        $unset: { outstanding: "" },
-      },
-      { new: true }
+    const settlementAt = new Date()
+    const previousPayments = existingSale.payments as
+      | Array<{ amount?: number }>
+      | undefined
+    const previousAmountPaid = getAmountPaidFromPayments(previousPayments)
+    const settlementAmount = Math.max(
+      0,
+      existingSale.remainingBalance ??
+        existingSale.totalAmount - previousAmountPaid
     )
+    const paymentEntry =
+      settlementAmount > 0
+        ? {
+            amount: settlementAmount,
+            paymentMethod: payload.paymentMethod,
+            paidAt: settlementAt,
+            receivedBy: session.userId,
+            notes: "Paid in full",
+          }
+        : null
 
+    // Settlement, invoice status, and the sale snapshot must land together — a
+    // settlement persisted without its snapshot would freeze the loan as fully
+    // outstanding on every backdated balance sheet. (Boxed result: TypeScript
+    // does not track assignments to captured `let` bindings inside the closure.)
+    const settled: { sale: typeof existingSale | null } = { sale: null }
+    const dbSession = await db.startSession()
+    try {
+      await dbSession.withTransaction(async () => {
+        await ensureInitialSaleSnapshot(existingSale, dbSession)
+
+        const updated = await Sale.findOneAndUpdate(
+          { _id: id, store },
+          {
+            ...(paymentEntry ? { $push: { payments: paymentEntry } } : {}),
+            paymentStatus: "paid",
+            paymentMethod: payload.paymentMethod,
+            remainingBalance: 0,
+            amountPaid: existingSale.totalAmount,
+            ...(customerFromOutstanding && !existingSale.customer
+              ? { customer: customerFromOutstanding }
+              : {}),
+            $unset: { outstanding: "" },
+          },
+          { new: true, session: dbSession }
+        )
+
+        if (!updated) {
+          throw new SaleNotFoundError()
+        }
+        settled.sale = updated
+
+        if (customerFromOutstanding && !existingSale.customer) {
+          await Sale.collection.updateOne(
+            { _id: updated._id, store },
+            { $set: { customer: customerFromOutstanding } },
+            { session: dbSession }
+          )
+        }
+        await Invoice.updateOne(
+          { saleId: updated._id, store },
+          { status: "paid" },
+          { session: dbSession }
+        )
+
+        await recordSaleSnapshot(updated, "settled", settlementAt, dbSession)
+      })
+    } finally {
+      await dbSession.endSession()
+    }
+
+    const sale = settled.sale
     if (!sale) {
       return NextResponse.json(
         { success: false, error: "Sale not found" },
         { status: 404 }
       )
     }
-
-    if (customerFromOutstanding && !existingSale.customer) {
-      await Sale.collection.updateOne(
-        { _id: sale._id, store },
-        { $set: { customer: customerFromOutstanding } }
-      )
-    }
-    await Invoice.updateOne({ saleId: sale._id, store }, { status: "paid" })
 
     const saleResponse =
       typeof sale.toObject === "function" ? sale.toObject() : sale
@@ -251,6 +311,13 @@ export async function PATCH(
 
     return NextResponse.json({ success: true, data: saleResponse })
   } catch (error) {
+    if (error instanceof SaleNotFoundError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 404 }
+      )
+    }
+    console.error("[Settle Sale Error]", error)
     return NextResponse.json(
       { success: false, error: "Failed to update sale" },
       { status: 500 }
@@ -413,8 +480,10 @@ export async function PUT(
     // Keep the sale, linked invoice, and inventory correction atomic.
     const db = await connectToDatabase()
     const dbSession = await db.startSession()
+    const editEffectiveAt = new Date()
     try {
       await dbSession.withTransaction(async () => {
+        await ensureInitialSaleSnapshot(sale, dbSession)
         await applyStockChanges(stockChanges, store, dbSession)
 
         sale.items = saleItems
@@ -487,6 +556,8 @@ export async function PUT(
         if (invoice) {
           await invoice.save({ session: dbSession })
         }
+
+        await recordSaleSnapshot(sale, "edited", editEffectiveAt, dbSession)
       })
     } finally {
       await dbSession.endSession()
@@ -591,6 +662,10 @@ export async function DELETE(
     const dbSession = await db.startSession()
     try {
       await dbSession.withTransaction(async () => {
+        const deleteEffectiveAt = new Date()
+        await ensureInitialSaleSnapshot(sale, dbSession)
+        await recordSaleSnapshot(sale, "deleted", deleteEffectiveAt, dbSession)
+
         // Removing a recorded sale reverses its physical stock movement.
         if (restockQuantities.size > 0) {
           await Product.bulkWrite(

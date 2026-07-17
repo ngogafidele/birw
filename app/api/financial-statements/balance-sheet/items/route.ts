@@ -1,6 +1,7 @@
 // Lists resolved manual balance sheet items and creates new ones (admin/manager only).
 import { NextRequest, NextResponse } from "next/server"
 import mongoose from "mongoose"
+import { ZodError } from "zod"
 import { connectToDatabase } from "@/lib/db/connection"
 import { requireManagerOrAdmin } from "@/lib/auth/middleware"
 import { resolveStoreFromRequest } from "@/lib/auth/session"
@@ -100,8 +101,16 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     )
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to create balance sheet item"
-    return NextResponse.json({ success: false, error: message }, { status: 400 })
+    if (error instanceof ZodError) {
+      return NextResponse.json(
+        { success: false, error: "Check the item details and try again" },
+        { status: 400 }
+      )
+    }
+    console.error("[Create Balance Sheet Item Error]", error)
+    return NextResponse.json(
+      { success: false, error: "Failed to create balance sheet item" },
+      { status: 500 }
+    )
   }
 }
