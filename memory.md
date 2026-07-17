@@ -1,71 +1,61 @@
-# Memory — Financial Statements (Income Statement + Balance Sheet)
+# Memory — Balance Sheet Accuracy Overhaul (snapshot ledger + auto lines)
 
-Last updated: 2026-07-09
+Last updated: 2026-07-17
 
 ## What was built
 
-A new **Financial Statements** section (admin + manager only), delivered in 5 stages. Lint passes clean at every stage; **`npm run build` / typecheck was NOT run (user declined) and there was no live end-to-end run.**
+Extended the existing Financial Statements feature with an **immutable snapshot ledger** so statements stay historically accurate after later edits/payments/deletions, plus several accounting improvements. **Not build-verified — user has repeatedly declined `npm run build`; no live run.** Lint is clean for all touched files (1 pre-existing error remains in `product-monitor-dialog.tsx`, not mine).
 
-**Auth / nav**
-- `lib/auth/middleware.ts` — added `requireManagerOrAdmin` (mirrors `requireAdmin`; admits admin or `role === "manager"`, rejects staff). First admin-and-manager-but-not-staff surface.
-- `components/layout/sidebar.tsx` — added **Financial Statements** nav item (lucide `FileSpreadsheet`), shown when `session.isAdmin || session.role === "manager"` (new `isManagerOrAdmin` branch; staff still get `commonNavItems` only).
-- `app/(dashboard)/financial-statements/page.tsx` — role-gated server page (redirects staff to `/sales`), renders the client manager.
-- `components/financial-statements/financial-statements-manager.tsx` — two-tab toggle built with button state (no Tabs primitive exists in `components/ui`).
+**New models**
+- `lib/db/models/SaleSnapshot.ts` — *(already existed at session start, part of prior uncommitted work)* immutable sale versions.
+- `lib/db/models/ReturnSnapshot.ts` — **new**, immutable return versions (`created|edited|deleted`).
 
-**Compute (shared single source of truth) — `lib/financial/`**
-- `period.ts` — `resolveIncomeRange(start,end)` (defaults this month→today) and `resolveAsOf(asOf)` (defaults today); use business-date helpers from `lib/utils/time.ts`; `addDays` for endExclusive.
-- `income-statement.ts` — `computeIncomeStatement(store, { from?, endExclusive })`. **Structural replica of the Reports page aggregations** (`app/(dashboard)/reports/page.tsx`): revenue net of returns, gross profit nets returned-goods cost, COGS = revenue − grossProfit, sales by `createdAt`, expenses by `date`. Omit `from` → cumulative (used for Retained Earnings).
-- `balance-sheet.ts` — `computeBalanceSheet(store, { asOf, endExclusive, asOfInput, manual? })` + `resolveManualItems` + `manualItemsToLines`. Reconstructs Inventory Value, Accounts Receivable, Retained Earnings; assembles grouped structure + `balanceDifference`. Resolves manual items internally when `manual` not passed.
+**New compute modules — `lib/financial/`**
+- `sale-snapshot-history.ts` *(pre-existing)* / `return-snapshot-history.ts` **new** — `recordSaleSnapshot` / `recordReturnSnapshot` + `ensureInitial*Snapshot` (lazy backfill of a `created` version before first mutation).
+- `sale-snapshot-reporting.ts` *(pre-existing, extended)* — added `computeSnapshotAwareCashCollected`.
+- `return-snapshot-reporting.ts` **new** — `computeSnapshotAwareReturnTotals`, `computeSnapshotAwareNetRefunds`, `computeSnapshotAwareReturnFlowsAfter`.
+- `cash-position.ts` **new** — derives Cash & Bank = collections − purchases − expenses − net refunds.
 
-**Model / validator**
-- `lib/db/models/BalanceSheetItem.ts` — append-only versioned model: `{ store, groupId, category(enum), name, amount, effectiveDate, status: active|deleted, notes, createdBy }`. `BALANCE_SHEET_CATEGORIES` exported. Each doc is one immutable version sharing `groupId`.
-- `lib/db/validators/balance-sheet-item.ts` — Zod Create/Update (same shape) + Delete (optional effectiveDate).
+**Recording wired into routes**
+- Sales: `POST /api/sales` (created), `PATCH`/`PUT`/`DELETE /api/sales/[id]` (settled/edited/deleted). Returns: `POST /api/returns` (created), `PUT`/`DELETE /api/returns/[id]` (edited/deleted).
+- **Payments `POST /api/sales/[id]/payments` and PATCH settle are now wrapped in MongoDB transactions** (were bare `findOneAndUpdate`) so a payment can't persist without its snapshot.
 
-**API routes (all `requireManagerOrAdmin`, store-scoped, `{success,data}`)**
-- `income-statement/route.ts` (GET `?start=&end=`) + `income-statement/pdf/route.ts`
-- `balance-sheet/route.ts` (GET `?asOf=`) + `balance-sheet/pdf/route.ts`
-- `balance-sheet/items/route.ts` (GET resolved-as-of, POST new group)
-- `balance-sheet/items/[id]/route.ts` (PUT edit→new version, DELETE→tombstone version). **`[id]` is the `groupId`.**
-- PDF routes have `export const runtime = "nodejs"`.
+**Reporting switched to snapshots**
+- `income-statement.ts` — sales + returns now snapshot-aware (formula unchanged).
+- `balance-sheet.ts` — added **Cash & Bank** auto line; **weighted-average** inventory cost (was latest-receipt); returns rewind via snapshot deltas; **split equity** into Retained Earnings (prior year-end) + Current Year Earnings; new `inventoryWarnings` for negative reconstructed stock.
 
-**PDF** — `lib/pdf/financial-statement-generator.ts`: `generateIncomeStatementPDF` + `generateBalanceSheetPDF`. Same PDFKit loader/logo pattern as `outstanding-generator.ts`, uses `PDF_COLORS` + `STORE_DOCUMENT_DETAILS[store]`.
+**View** — `balance-sheet-view.tsx`: "Compare To" date → muted comparison column + subtotal deltas; inventory-warning amber banner.
 
-**Views** — `income-statement-view.tsx` (presets This/Last Month, This Year + custom range) and `balance-sheet-view.tsx` (As-Of picker, grouped layout, Balance Check card, manual-item CRUD dialog with grouped `Select`, inline edit/delete). Both have Download PDF buttons.
-
-**Docs** — updated `context/progress-tracker.md` (Implemented + Operational Notes) and `context/ui-registry.md` (new Financial Statements section).
+**Docs** — updated `context/ui-registry.md` Financial Statements entry (comparison column, warning banner, React Compiler + snapshot-ledger notes).
 
 ## Decisions made
 
-(Confirmed by the user via AskUserQuestion — the heavier option was chosen each time.)
-- **Historical reconstruction** for balance-sheet as-of past dates (not "today only").
-- **Inventory valuation = latest receipt `unitCost` on/before date**, fallback latest `Sale.items.basePrice`, then current `Product.costPrice`. Quantity reconstructed by rewinding current stock by movements dated ≥ endExclusive (receipts/sales/returns/replacements/adjustments — same sources as `app/api/products/[id]/movements`). Negative reconstructed qty floored out of valuation.
-- **Accounts Receivable** = for loan sales (`outstanding != null`) created < endExclusive: `totalAmount − Σ payments(paidAt < endExclusive)`, floored at 0.
-- **Shared lib module** replicates Reports math; Reports page left untouched (intentional duplication, keep in sync).
-- **One route + two tabs**, not two nav items.
-- **Versioned immutable manual items**: edits/deletes insert new effective-dated versions; snapshots resolve to the latest version with `effectiveDate ≤ asOf`, dropping tombstoned groups. Never mutate/hard-delete a version.
-- **Balance Check** shows plain `assets − (liabilities + equity)` difference; **no cash auto-derived** (users add a manual "Cash & Bank" item).
-- **No existing schema modified** (Product/Sale/Expense/ProductReceipt/StockAdjustment/Return are read-only). Only new model is `BalanceSheetItem`.
+- **Snapshot ledger is the source of record for financial statements**; Reports keep reading live records. Same formula, deliberately different data source — documented in `income-statement.ts` header. Do not "reconcile" them by reverting.
+- **Cash & Bank is derived, not manual**; owner capital/drawings aren't tracked, so the figure can go negative — surfaced via the Balance Check rather than hidden.
+- **Fiscal year = calendar year** (business time) for the retained/current-year split.
+- **Inventory valuation = weighted-average purchase cost** of receipts on/before date (replaced latest-receipt-cost).
+- Snapshot `store` typed as `string` (not `StoreKey`) in the history helpers — tightening it shifts Mongoose's `create()` overload resolution and surfaces `createdBy`/store generics errors.
 
 ## Problems solved
 
-- **`StockMovement` / `Outstanding` / `Customer` collections do NOT exist** (the original prompt assumed them). Cost lives on `Sale.items.basePrice`; AR is remaining balance/payment history on unpaid sales with an `outstanding` subdoc.
-- **`react-hooks/set-state-in-effect` is an ERROR in this repo's lint.** Calling a fetch wrapper that synchronously calls `setState` inside a `useEffect` triggers it (even one call-layer removed). Fix: initialize `loading: true` and, in the mount effect, only set state **after** the await (`.then/.catch/.finally`); keep synchronous `setState` in click handlers only. Capture initial range/as-of via `useState(() => ...)` so effect deps stay clean (no eslint-disable).
-- Reports COGS is *net of returns* — the income statement had to mirror that exactly or the two pages disagree.
+- **React Compiler (React 19/Next 16) forbids manual `useMemo` for derived values** whose inferred deps read nested fields → `react-hooks/preserve-manual-memoization` lint **error**. Fix: compute as a plain value with a module-level helper.
+- **AR-corruption bug** (found in review): payment/settle wrote sale + snapshot non-atomically; a failed snapshot write left `ensureInitial`'s stale `created` version, freezing the loan as fully outstanding on backdated sheets. Fixed with transactions.
+- Mongoose `findOneAndUpdate` inside a transaction closure: TypeScript won't narrow a captured `let`; used a boxed `{ sale }` result object.
+- `tsc --noEmit` shows many errors but the repo sets `ignoreBuildErrors: true`; remaining errors in touched files are the pre-existing `store: string`/`DocumentArray`/`_id` mongoose-generics class, not new logic bugs.
 
 ## Current state
 
-- All 5 stages implemented; **lint clean (exit 0), no issues in any new file.**
-- Not build-verified, not run against a live DB.
-- Two cosmetic choices left as-is pending user preference: (1) income statement renders COGS & Operating Expenses as **negative** figures; (2) manual-item **delete uses `window.confirm`** (not a styled dialog).
+- All improvements implemented; **lint clean for touched files**; **build NOT run**; no live verification.
+- Working tree has uncommitted changes across sales/returns routes, financial libs, the view, plus untracked `SaleSnapshot.ts`, `ReturnSnapshot.ts`, and the new lib modules. Nothing committed this session.
 
 ## Next session starts with
 
-1. **Run `npm run build`** — the only prescribed check not yet done; catches type errors lint misses (PDF generator types, Mongoose aggregation generics).
-2. **Live verify parity:** open `/financial-statements`, confirm the Income Statement equals `/reports` for the same range on real data (should match by construction). Use the `/verify` skill (needs dev server + MongoDB).
-3. Optionally address the two cosmetic choices if the user wants them changed.
+1. **Run `npm run build`** (may need network for font fetching) — the only prescribed check not done.
+2. **Live-verify** with `/verify` (dev server + Mongo replica set): create a loan → partial payment → settle; edit then delete a sale/return; confirm a backdated balance sheet's Cash, Inventory (WAC), AR, and equity split stay stable and the Balance Check is sane. Confirm the comparison column + inventory warning render.
+3. Consider a **backfill** for pre-ledger sales/returns (statements before the ledger existed rely on live fallbacks; loans settled pre-ledger have no dated payment and are omitted from backdated AR).
 
 ## Open questions
 
-- User has not confirmed the two cosmetic choices (negative COGS/expense sign; `window.confirm` delete).
-- New heavy aggregations assume MongoDB is a replica set (app already uses transactions elsewhere, so presumably fine) — not verified against the actual deployment.
-- Balance-sheet inventory reconstruction fires ~8 aggregations + a full product scan per request; fine at this store's scale but a future perf spot (could add an "as-of = today" fast path using live `quantity`).
+- Cash & Bank can read negative until owner capital is entered as a manual item — acceptable, or add a guided "opening capital" prompt?
+- Snapshot collections grow one doc per create/edit/payment/delete and reports do full-collection scans — fine now, future perf watch.
+- Reports-vs-statements divergence is intentional but unconfirmed by the user as the desired product behavior.
