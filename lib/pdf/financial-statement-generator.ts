@@ -102,7 +102,6 @@ const DIVIDER_X = 372
 const CELL_PAD = 8
 const ROW_HEIGHT = 22
 const PAGE_BREAK_Y = 760
-const THANK_YOU_LINE = "Thank you for doing business with us."
 
 const logoPath = path.join(process.cwd(), "public", "images", "logo.png")
 const logoBox = {
@@ -504,14 +503,6 @@ export function generateBalanceSheetPDF(
     sheet.balanceDifference,
     { muted: true }
   )
-
-  cursor.y += 16
-  ensureSpace(doc, cursor)
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(9)
-    .fillColor(PDF_COLORS.text)
-    .text(THANK_YOU_LINE, LEFT, cursor.y, { align: "center", width: RIGHT - LEFT })
 
   doc.end()
   return done
