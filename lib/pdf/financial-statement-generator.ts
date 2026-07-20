@@ -98,8 +98,9 @@ export type BalanceSheetPdfPayload = {
 
 const LEFT = 48
 const RIGHT = 547
-const AMOUNT_X = 400
-const AMOUNT_WIDTH = RIGHT - AMOUNT_X
+const DIVIDER_X = 372
+const CELL_PAD = 8
+const ROW_HEIGHT = 22
 const PAGE_BREAK_Y = 760
 const THANK_YOU_LINE = "Thank you for doing business with us."
 
@@ -213,53 +214,131 @@ function ensureSpace(doc: PdfDoc, cursor: Cursor, needed = 22) {
   }
 }
 
-function drawLine(
+const LABEL_WIDTH = DIVIDER_X - LEFT - CELL_PAD * 2
+const AMOUNT_WIDTH = RIGHT - DIVIDER_X - CELL_PAD
+
+// PDFKit's built-in Helvetica uses WinAnsi encoding, which lacks the Unicode
+// minus (U+2212) and en/em dashes — they render as stray glyphs. Map them to a
+// plain hyphen so labels and manual-item notes stay legible in print.
+function sanitizeText(value: string) {
+  return value.replace(/[−–—]/g, "-")
+}
+
+// Strokes a row's outer box, the label/amount divider, and an optional heavier top rule.
+function drawRowBorders(
+  doc: PdfDoc,
+  yTop: number,
+  height: number,
+  options: { withDivider?: boolean; heavyTop?: "border" | "accent" } = {}
+) {
+  doc.lineWidth(0.7).strokeColor(PDF_COLORS.border)
+  doc.rect(LEFT, yTop, RIGHT - LEFT, height).stroke()
+  if (options.withDivider ?? true) {
+    doc.moveTo(DIVIDER_X, yTop).lineTo(DIVIDER_X, yTop + height).stroke()
+  }
+  if (options.heavyTop) {
+    const accent = options.heavyTop === "accent"
+    doc
+      .lineWidth(accent ? 1.4 : 1)
+      .strokeColor(accent ? PDF_COLORS.accent : PDF_COLORS.text)
+      .moveTo(LEFT, yTop)
+      .lineTo(RIGHT, yTop)
+      .stroke()
+  }
+}
+
+// Draws the DESCRIPTION / AMOUNT column header band in the shared print style.
+function drawTableHeader(doc: PdfDoc, cursor: Cursor) {
+  ensureSpace(doc, cursor, ROW_HEIGHT)
+  const yTop = cursor.y
+  doc.rect(LEFT, yTop, RIGHT - LEFT, ROW_HEIGHT).fillColor(PDF_COLORS.tableHeader).fill()
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9)
+    .fillColor(PDF_COLORS.sectionText)
+    .text("DESCRIPTION", LEFT + CELL_PAD, yTop + 7, { width: LABEL_WIDTH })
+    .text("AMOUNT", DIVIDER_X + CELL_PAD, yTop + 7, {
+      width: AMOUNT_WIDTH - CELL_PAD,
+      align: "right",
+    })
+  drawRowBorders(doc, yTop, ROW_HEIGHT)
+  cursor.y = yTop + ROW_HEIGHT
+}
+
+// Draws a full-width grouping band (e.g. "CURRENT ASSETS") spanning both columns.
+function drawBandRow(doc: PdfDoc, cursor: Cursor, text: string) {
+  ensureSpace(doc, cursor, 20)
+  const yTop = cursor.y
+  const height = 20
+  doc.rect(LEFT, yTop, RIGHT - LEFT, height).fillColor(PDF_COLORS.neutralFill).fill()
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(8)
+    .fillColor(PDF_COLORS.mutedText)
+    .text(text.toUpperCase(), LEFT + CELL_PAD, yTop + 6, { width: RIGHT - LEFT - CELL_PAD * 2 })
+  drawRowBorders(doc, yTop, height, { withDivider: false })
+  cursor.y = yTop + height
+}
+
+// Draws a single bordered table row: label in the left cell, amount right-aligned in the right cell.
+function drawTableRow(
   doc: PdfDoc,
   cursor: Cursor,
   label: string,
-  amount: number,
+  amount: number | null,
   options: {
     indent?: number
     bold?: boolean
     muted?: boolean
-    rule?: boolean
     accent?: boolean
+    fill?: string
+    heavyTop?: "border" | "accent"
     note?: string
   } = {}
 ) {
-  ensureSpace(doc, cursor)
   const indent = options.indent ?? 0
-  if (options.rule) {
-    doc
-      .moveTo(LEFT, cursor.y)
-      .lineTo(RIGHT, cursor.y)
-      .lineWidth(options.accent ? 1.2 : 0.6)
-      .strokeColor(options.accent ? PDF_COLORS.accent : PDF_COLORS.border)
-      .stroke()
-    cursor.y += 8
+  const labelWidth = LABEL_WIDTH - indent
+  const noteFontSize = 8
+
+  let height = ROW_HEIGHT
+  if (options.note) {
+    doc.font("Helvetica").fontSize(noteFontSize)
+    height = 20 + doc.heightOfString(options.note, { width: labelWidth }) + 6
   }
 
-  const font = options.bold ? "Helvetica-Bold" : "Helvetica"
-  const color = options.muted ? PDF_COLORS.mutedText : PDF_COLORS.text
+  ensureSpace(doc, cursor, height)
+  const yTop = cursor.y
+
+  if (options.fill) {
+    doc.rect(LEFT, yTop, RIGHT - LEFT, height).fillColor(options.fill).fill()
+  }
+
+  const textColor = options.muted ? PDF_COLORS.mutedText : PDF_COLORS.text
   doc
-    .font(font)
+    .font(options.bold ? "Helvetica-Bold" : "Helvetica")
     .fontSize(options.bold ? 11 : 10)
-    .fillColor(color)
-    .text(label, LEFT + indent, cursor.y, { width: AMOUNT_X - LEFT - indent })
-    .text(formatCurrency(amount), AMOUNT_X, cursor.y, {
-      width: AMOUNT_WIDTH,
-      align: "right",
-    })
+    .fillColor(textColor)
+    .text(sanitizeText(label), LEFT + CELL_PAD + indent, yTop + 6, { width: labelWidth })
+
+  if (amount !== null) {
+    doc
+      .fillColor(options.accent ? PDF_COLORS.primary : textColor)
+      .text(formatCurrency(amount), DIVIDER_X + CELL_PAD, yTop + 6, {
+        width: AMOUNT_WIDTH - CELL_PAD,
+        align: "right",
+      })
+  }
 
   if (options.note) {
-    cursor.y += 14
     doc
       .font("Helvetica")
-      .fontSize(8)
+      .fontSize(noteFontSize)
       .fillColor(PDF_COLORS.mutedText)
-      .text(options.note, LEFT + indent, cursor.y, { width: AMOUNT_X - LEFT - indent })
+      .text(sanitizeText(options.note), LEFT + CELL_PAD + indent, yTop + 20, { width: labelWidth })
   }
-  cursor.y += 20
+
+  drawRowBorders(doc, yTop, height, { heavyTop: options.heavyTop })
+  cursor.y = yTop + height
 }
 
 function drawSectionHeading(doc: PdfDoc, cursor: Cursor, text: string) {
@@ -271,16 +350,6 @@ function drawSectionHeading(doc: PdfDoc, cursor: Cursor, text: string) {
     .fillColor(PDF_COLORS.sectionText)
     .text(text, LEFT, cursor.y)
   cursor.y += 20
-}
-
-function drawSubHeading(doc: PdfDoc, cursor: Cursor, text: string) {
-  ensureSpace(doc, cursor)
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(9)
-    .fillColor(PDF_COLORS.mutedText)
-    .text(text.toUpperCase(), LEFT, cursor.y)
-  cursor.y += 16
 }
 
 function createDoc() {
@@ -312,44 +381,64 @@ export function generateIncomeStatementPDF(
   const cursor: Cursor = { y: start }
   const s = payload.statement
 
-  drawLine(doc, cursor, "Revenue", s.revenue, { muted: true })
-  drawLine(doc, cursor, "Cost of Goods Sold", -s.costOfGoodsSold, { muted: true })
-  drawLine(doc, cursor, "Gross Profit", s.grossProfit, { bold: true, rule: true })
-  drawLine(doc, cursor, "Operating Expenses", -s.operatingExpenses, { muted: true })
-  drawLine(doc, cursor, "Net Profit", s.netProfit, {
+  drawTableHeader(doc, cursor)
+  drawTableRow(doc, cursor, "Revenue", s.revenue, { muted: true })
+  drawTableRow(doc, cursor, "Cost of Goods Sold", -s.costOfGoodsSold, {
+    muted: true,
+    fill: PDF_COLORS.rowAlt,
+  })
+  drawTableRow(doc, cursor, "Gross Profit", s.grossProfit, {
     bold: true,
-    rule: true,
+    fill: PDF_COLORS.tableHeader,
+    heavyTop: "border",
+  })
+  drawTableRow(doc, cursor, "Operating Expenses", -s.operatingExpenses, {
+    muted: true,
+    fill: PDF_COLORS.rowAlt,
+  })
+  drawTableRow(doc, cursor, "Net Profit", s.netProfit, {
+    bold: true,
     accent: true,
+    fill: PDF_COLORS.tableHeader,
+    heavyTop: "accent",
   })
 
   doc.end()
   return done
 }
 
-function drawLineGroup(
+// Renders one bordered balance-sheet section: a section heading, a column header,
+// each line group as a band plus its lines, and a closing total row.
+function drawBalanceSection(
   doc: PdfDoc,
   cursor: Cursor,
   heading: string,
-  lines: BalanceSheetLine[]
+  groups: Array<{ heading: string; lines: BalanceSheetLine[] }>,
+  totalLabel: string,
+  totalAmount: number
 ) {
-  drawSubHeading(doc, cursor, heading)
-  if (lines.length === 0) {
-    ensureSpace(doc, cursor)
-    doc
-      .font("Helvetica")
-      .fontSize(9)
-      .fillColor(PDF_COLORS.mutedText)
-      .text("None recorded.", LEFT + 12, cursor.y)
-    cursor.y += 18
-    return
-  }
-  for (const line of lines) {
-    drawLine(doc, cursor, line.label, line.amount, {
-      indent: 12,
-      muted: true,
-      note: line.note,
+  drawSectionHeading(doc, cursor, heading)
+  drawTableHeader(doc, cursor)
+  for (const group of groups) {
+    drawBandRow(doc, cursor, group.heading)
+    if (group.lines.length === 0) {
+      drawTableRow(doc, cursor, "None recorded.", null, { muted: true, indent: 8 })
+      continue
+    }
+    group.lines.forEach((line, index) => {
+      drawTableRow(doc, cursor, line.label, line.amount, {
+        indent: 8,
+        muted: true,
+        note: line.note,
+        fill: index % 2 === 1 ? PDF_COLORS.rowAlt : undefined,
+      })
     })
   }
+  drawTableRow(doc, cursor, totalLabel, totalAmount, {
+    bold: true,
+    fill: PDF_COLORS.tableHeader,
+    heavyTop: "border",
+  })
 }
 
 export function generateBalanceSheetPDF(
@@ -367,39 +456,54 @@ export function generateBalanceSheetPDF(
   const cursor: Cursor = { y: start }
   const sheet = payload.sheet
 
-  drawSectionHeading(doc, cursor, "Assets")
-  drawLineGroup(doc, cursor, "Current Assets", sheet.assets.current)
-  drawLineGroup(doc, cursor, "Fixed Assets", sheet.assets.fixed)
-  drawLine(doc, cursor, "Total Assets", sheet.assets.total, {
-    bold: true,
-    rule: true,
-  })
+  drawBalanceSection(
+    doc,
+    cursor,
+    "Assets",
+    [
+      { heading: "Current Assets", lines: sheet.assets.current },
+      { heading: "Fixed Assets", lines: sheet.assets.fixed },
+    ],
+    "Total Assets",
+    sheet.assets.total
+  )
 
-  drawSectionHeading(doc, cursor, "Liabilities")
-  drawLineGroup(doc, cursor, "Current Liabilities", sheet.liabilities.current)
-  drawLineGroup(doc, cursor, "Long-term Liabilities", sheet.liabilities.longTerm)
-  drawLine(doc, cursor, "Total Liabilities", sheet.liabilities.total, {
-    bold: true,
-    rule: true,
-  })
+  drawBalanceSection(
+    doc,
+    cursor,
+    "Liabilities",
+    [
+      { heading: "Current Liabilities", lines: sheet.liabilities.current },
+      { heading: "Long-term Liabilities", lines: sheet.liabilities.longTerm },
+    ],
+    "Total Liabilities",
+    sheet.liabilities.total
+  )
 
-  drawSectionHeading(doc, cursor, "Equity")
-  drawLineGroup(doc, cursor, "Equity", sheet.equity.lines)
-  drawLine(doc, cursor, "Total Equity", sheet.equity.total, {
-    bold: true,
-    rule: true,
-  })
+  drawBalanceSection(
+    doc,
+    cursor,
+    "Equity",
+    [{ heading: "Equity", lines: sheet.equity.lines }],
+    "Total Equity",
+    sheet.equity.total
+  )
 
-  drawLine(
+  cursor.y += 10
+  drawTableRow(
     doc,
     cursor,
     "Total Liabilities + Equity",
     sheet.totalLiabilitiesAndEquity,
-    { bold: true, rule: true, accent: true }
+    { bold: true, accent: true, fill: PDF_COLORS.tableHeader, heavyTop: "accent" }
   )
-  drawLine(doc, cursor, "Balance Check (Assets − Liabilities − Equity)", sheet.balanceDifference, {
-    muted: true,
-  })
+  drawTableRow(
+    doc,
+    cursor,
+    "Balance Check (Assets − Liabilities − Equity)",
+    sheet.balanceDifference,
+    { muted: true }
+  )
 
   cursor.y += 16
   ensureSpace(doc, cursor)
