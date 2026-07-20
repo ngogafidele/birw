@@ -307,7 +307,7 @@ export async function computeBalanceSheet(
       note: "Collections minus purchases, expenses, and refunds; record owner capital as manual items",
     },
     {
-      label: "Inventory Value",
+      label: "Inventory",
       amount: inventory.total,
       source: "auto",
       note: "Reconstructed on-hand stock at weighted-average purchase cost",

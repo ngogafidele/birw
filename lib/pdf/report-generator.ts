@@ -297,12 +297,6 @@ function drawMetrics(doc: ReportPdfDocument, y: number, totals: ReturnType<typeo
       border: PDF_COLORS.primary,
     },
     {
-      label: "Inventory Value",
-      value: formatCurrency(totals.inventoryRetail),
-      fill: PDF_COLORS.infoFill,
-      border: PDF_COLORS.infoBorder,
-    },
-    {
       label: "Sales Records",
       value: formatNumber(totals.sales),
       fill: PDF_COLORS.warningFill,
