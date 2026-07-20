@@ -1,61 +1,47 @@
-# Memory — Balance Sheet Accuracy Overhaul (snapshot ledger + auto lines)
+# Memory — Financial Statement PDFs + Inventory Valuation Review
 
-Last updated: 2026-07-17
+Last updated: 2026-07-20
 
 ## What was built
 
-Extended the existing Financial Statements feature with an **immutable snapshot ledger** so statements stay historically accurate after later edits/payments/deletions, plus several accounting improvements. **Not build-verified — user has repeatedly declined `npm run build`; no live run.** Lint is clean for all touched files (1 pre-existing error remains in `product-monitor-dialog.tsx`, not mine).
-
-**New models**
-- `lib/db/models/SaleSnapshot.ts` — *(already existed at session start, part of prior uncommitted work)* immutable sale versions.
-- `lib/db/models/ReturnSnapshot.ts` — **new**, immutable return versions (`created|edited|deleted`).
-
-**New compute modules — `lib/financial/`**
-- `sale-snapshot-history.ts` *(pre-existing)* / `return-snapshot-history.ts` **new** — `recordSaleSnapshot` / `recordReturnSnapshot` + `ensureInitial*Snapshot` (lazy backfill of a `created` version before first mutation).
-- `sale-snapshot-reporting.ts` *(pre-existing, extended)* — added `computeSnapshotAwareCashCollected`.
-- `return-snapshot-reporting.ts` **new** — `computeSnapshotAwareReturnTotals`, `computeSnapshotAwareNetRefunds`, `computeSnapshotAwareReturnFlowsAfter`.
-- `cash-position.ts` **new** — derives Cash & Bank = collections − purchases − expenses − net refunds.
-
-**Recording wired into routes**
-- Sales: `POST /api/sales` (created), `PATCH`/`PUT`/`DELETE /api/sales/[id]` (settled/edited/deleted). Returns: `POST /api/returns` (created), `PUT`/`DELETE /api/returns/[id]` (edited/deleted).
-- **Payments `POST /api/sales/[id]/payments` and PATCH settle are now wrapped in MongoDB transactions** (were bare `findOneAndUpdate`) so a payment can't persist without its snapshot.
-
-**Reporting switched to snapshots**
-- `income-statement.ts` — sales + returns now snapshot-aware (formula unchanged).
-- `balance-sheet.ts` — added **Cash & Bank** auto line; **weighted-average** inventory cost (was latest-receipt); returns rewind via snapshot deltas; **split equity** into Retained Earnings (prior year-end) + Current Year Earnings; new `inventoryWarnings` for negative reconstructed stock.
-
-**View** — `balance-sheet-view.tsx`: "Compare To" date → muted comparison column + subtotal deltas; inventory-warning amber banner.
-
-**Docs** — updated `context/ui-registry.md` Financial Statements entry (comparison column, warning banner, React Compiler + snapshot-ledger notes).
+- **Bordered tables in financial statement PDFs** — reworked `lib/pdf/financial-statement-generator.ts`: both statements now render as fully bordered grids (`DESCRIPTION | AMOUNT` header band with `tableHeader` fill, outer box + per-row separators + a label/amount vertical divider at x=372, alternating `rowAlt` tint on data rows, accent total rows with heavier top rule + gold accent on the final figure). New helpers: `drawRowBorders`, `drawTableHeader`, `drawBandRow`, `drawTableRow`, `drawBalanceSection`. Income Statement = one table; Balance Sheet = one bordered table per section (Assets / Liabilities / Equity), sub-groups as full-width `neutralFill` band rows, manual-item notes as an 8pt muted sub-line inside the cell.
+- **`sanitizeText`** (same file) — maps Unicode minus (U+2212) and en/em dashes to ASCII hyphen before every label/note is drawn.
+- **Removed "Thank you for doing business with us."** from the Balance Sheet PDF only (+ deleted the now-unused `THANK_YOU_LINE` constant; the Income Statement never used it).
+- **Renamed Balance Sheet line "Inventory Value" -> "Inventory"** — single change at `lib/financial/balance-sheet.ts:310`; propagates to both the on-screen view and the PDF because both render `line.label` from computed data.
+- **Removed the retail "Inventory Value" card** from: dashboard (`components/dashboard/dashboard-stats.tsx`, also removed the now-unused `Tags` lucide import), reports screen (`app/(dashboard)/reports/page.tsx`), and report PDF (`lib/pdf/report-generator.ts`). The "Inventory Cost" card (`quantity x costPrice`) remains on all three.
+- Updated `context/ui-registry.md` (PDF Documents entry) and `context/progress-tracker.md` for the bordered-table + rename work.
 
 ## Decisions made
 
-- **Snapshot ledger is the source of record for financial statements**; Reports keep reading live records. Same formula, deliberately different data source — documented in `income-statement.ts` header. Do not "reconcile" them by reverting.
-- **Cash & Bank is derived, not manual**; owner capital/drawings aren't tracked, so the figure can go negative — surfaced via the Balance Check rather than hidden.
-- **Fiscal year = calendar year** (business time) for the retained/current-year split.
-- **Inventory valuation = weighted-average purchase cost** of receipts on/before date (replaced latest-receipt-cost).
-- Snapshot `store` typed as `string` (not `StoreKey`) in the history helpers — tightening it shifts Mongoose's `create()` overload resolution and surfaces `createdBy`/store generics errors.
+- Balance-sheet PDF changes are **rendering-only** — no statement math, line items, ordering, payloads, or routes touched.
+- Removed the retail "Inventory Value" card from the report **PDF** too (not just the screen) to honor the CLAUDE.md rule that reports and report PDFs stay aligned.
+- Kept the retail data plumbing (`inventoryValue` in dashboard `/api/dashboard/stats` response; `inventoryRetail` in the report aggregation + `StoreReport` type + `sumReports`) — now computed-but-unused; left in place to avoid rippling shared types across several files.
 
 ## Problems solved
 
-- **React Compiler (React 19/Next 16) forbids manual `useMemo` for derived values** whose inferred deps read nested fields → `react-hooks/preserve-manual-memoization` lint **error**. Fix: compute as a plain value with a module-level helper.
-- **AR-corruption bug** (found in review): payment/settle wrote sale + snapshot non-atomically; a failed snapshot write left `ensureInitial`'s stale `created` version, freezing the loan as fully outstanding on backdated sheets. Fixed with transactions.
-- Mongoose `findOneAndUpdate` inside a transaction closure: TypeScript won't narrow a captured `let`; used a boxed `{ sale }` result object.
-- `tsc --noEmit` shows many errors but the repo sets `ignoreBuildErrors: true`; remaining errors in touched files are the pre-existing `store: string`/`DocumentArray`/`_id` mongoose-generics class, not new logic bugs.
+- **PDFKit's built-in Helvetica is WinAnsi-encoded** and renders U+2212 minus / en-em dashes as stray glyphs (showed up as `"` in the Balance Check label). Fixed with `sanitizeText`.
+- Verified PDFs end-to-end by writing a temp `_verify-pdf.mts` in project root and running `npx tsx --tsconfig tsconfig.json _verify-pdf.mts` (tsx resolves the `@/*` path alias from tsconfig); rendered the output PDFs via the Read tool to eyeball borders + hyphen fix. All temp files (`_verify-pdf.mts`, `_income.pdf`, `_balance.pdf`) deleted after.
+- Note: a fresh `npx eslint` cold-start can exceed 120s and go to background — wait for it, exit 0 = clean.
 
 ## Current state
 
-- All improvements implemented; **lint clean for touched files**; **build NOT run**; no live verification.
-- Working tree has uncommitted changes across sales/returns routes, financial libs, the view, plus untracked `SaleSnapshot.ts`, `ReturnSnapshot.ts`, and the new lib modules. Nothing committed this session.
+- All edits are **lint-clean** (verified per changed file). **`npm run build` was NOT run; no live app run.** Nothing committed this session — working tree has uncommitted edits across the files listed above plus the two context docs.
+
+## Key finding — inventory valuation is INCONSISTENT across the app (review delivered, NOT fixed)
+
+Three valuation sites, two methods:
+
+- **Reports** (`app/(dashboard)/reports/page.tsx`, `app/api/reports/pdf/route.ts`) and **Dashboard** (`app/api/dashboard/stats/route.ts`): live `Product.quantity x Product.costPrice`, where `costPrice` is **overwritten to the latest receipt's `unitCost` on every receipt** (`app/api/products/[id]/receipts/route.ts:57`, `$set: { costPrice }`) = **last-in cost**. Not point-in-time — always reflects "now" even for a past date range.
+- **Balance Sheet** (`lib/financial/balance-sheet.ts:159`, `computeInventoryValue`): quantity **reconstructed to the as-of date** via the immutable snapshot ledger (receipts-after subtracted, snapshot sales-out added back, returns-in subtracted, replacements-out added back, adjustments netted, clean `endExclusive` boundary), valued at **lifetime weighted-average of receipts on/before date** (`totalCost/totalQty`), fallback chain: WAC -> latest sale-cost snapshot -> current `costPrice` -> 0. Negative reconstructed qty -> value 0 + name pushed to `inventoryWarnings` (amber banner).
+
+Consequences: same on-hand stock is valued differently even for today (last-in vs lifetime-WAC). Reconstruction logic itself is **correct — no bug**; the issue is methodological inconsistency. Label clash remains: Reports/Dashboard "Inventory Value" was retail (`quantity x price`) — now removed; Balance Sheet "Inventory" is cost.
 
 ## Next session starts with
 
-1. **Run `npm run build`** (may need network for font fetching) — the only prescribed check not done.
-2. **Live-verify** with `/verify` (dev server + Mongo replica set): create a loan → partial payment → settle; edit then delete a sale/return; confirm a backdated balance sheet's Cash, Inventory (WAC), AR, and equity split stay stable and the Balance Check is sane. Confirm the comparison column + inventory warning render.
-3. Consider a **backfill** for pre-ledger sales/returns (statements before the ledger existed rely on live fallbacks; loans settled pre-ledger have no dated payment and are omitted from backdated AR).
+- If a build check is wanted, run `npm run build` (may need network for font fetching). Commit only if the user asks.
+- Biggest open item (offered, not chosen): **unify the three inventory-valuation sites onto one cost method** — either stop overwriting `costPrice` and maintain a moving weighted average, or have Reports/Dashboard call the same `computeInventoryValue` the Balance Sheet uses. This is high-risk (report math must stay aligned; changes historical numbers) — run `/architect` first. Optional low-risk cleanup: delete the dead `inventoryValue`/`inventoryRetail` plumbing.
 
 ## Open questions
 
-- Cash & Bank can read negative until owner capital is entered as a manual item — acceptable, or add a guided "opening capital" prompt?
-- Snapshot collections grow one doc per create/edit/payment/delete and reports do full-collection scans — fine now, future perf watch.
-- Reports-vs-statements divergence is intentional but unconfirmed by the user as the desired product behavior.
+- Should inventory valuation be unified, and on which method (WAC everywhere vs. reports reading `computeInventoryValue`)? User has not decided.
+- Does removing the retail "Inventory Value" card from the report **PDF** match intent? Offered to revert if the user meant screen-only.
