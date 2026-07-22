@@ -236,31 +236,53 @@ export function IncomeStatementView() {
         {loading && !statement ? (
           <p className="text-sm text-muted-foreground">Calculating…</p>
         ) : statement ? (
-          <dl className="divide-y divide-border/70">
-            {rows.map((row) => (
-              <div
-                key={row.label}
-                className={cn(
-                  "flex items-center justify-between py-3",
-                  row.kind === "subtotal" && "font-medium",
-                  row.kind === "total" &&
-                    "mt-1 border-t-2 border-border text-base font-semibold"
-                )}
-              >
-                <dt className={cn(row.kind === "line" && "text-muted-foreground")}>
-                  {row.label}
-                </dt>
-                <dd
-                  className={cn(
-                    row.kind === "total" &&
-                      (row.value >= 0 ? "text-emerald-700" : "text-rose-700")
-                  )}
-                >
-                  {formatCurrency(row.value)}
-                </dd>
-              </div>
-            ))}
-          </dl>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse border border-border text-sm">
+              <thead>
+                <tr className="bg-muted text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                  <th className="border border-border px-3 py-2 text-left font-medium">
+                    Description
+                  </th>
+                  <th className="border border-border px-3 py-2 text-right font-medium">
+                    Amount
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, index) => (
+                  <tr
+                    key={row.label}
+                    className={cn(
+                      row.kind === "line" &&
+                        index % 2 === 1 &&
+                        "bg-muted/30",
+                      row.kind === "subtotal" && "bg-muted/50 font-medium",
+                      row.kind === "total" &&
+                        "border-t-2 border-t-accent bg-muted/50 text-base font-semibold"
+                    )}
+                  >
+                    <td
+                      className={cn(
+                        "border border-border px-3 py-2",
+                        row.kind === "line" && "text-muted-foreground"
+                      )}
+                    >
+                      {row.label}
+                    </td>
+                    <td
+                      className={cn(
+                        "border border-border px-3 py-2 text-right tabular-nums",
+                        row.kind === "total" &&
+                          (row.value >= 0 ? "text-emerald-700" : "text-rose-700")
+                      )}
+                    >
+                      {formatCurrency(row.value)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <p className="text-sm text-muted-foreground">
             No data for the selected range.

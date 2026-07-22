@@ -129,108 +129,251 @@ function buildCompareMap(lines: BalanceSheetLine[]) {
   return new Map(lines.map((line) => [line.id ?? line.label, line.amount]))
 }
 
-function LineRows({
-  lines,
-  compare,
-  onEdit,
-  onDelete,
-}: {
-  lines: BalanceSheetLine[]
-  // Comparison amounts keyed by line id (manual) or label (auto); null = comparison off.
-  compare?: Map<string, number> | null
-  onEdit: (id: string) => void
-  onDelete: (id: string) => void
-}) {
-  if (lines.length === 0) {
-    return <p className="py-2 text-sm text-muted-foreground">None recorded.</p>
-  }
+// Row model for a bordered balance-sheet table. Band rows introduce a sub-group,
+// line rows carry a reconstructed/manual line, and subtotal/grand rows close a section.
+type StatementRow =
+  | { kind: "band"; label: string }
+  | { kind: "empty" }
+  | { kind: "line"; line: BalanceSheetLine; compareValue?: number | null }
+  | {
+      kind: "subtotal" | "grand"
+      label: string
+      amount: number
+      compareAmount?: number
+    }
+
+// Builds the line rows for one sub-group, attaching the comparison amount (or null
+// when the line has no counterpart) when comparison is active; undefined = off.
+function lineRowsModel(
+  lines: BalanceSheetLine[],
+  compareMap?: Map<string, number> | null
+): StatementRow[] {
+  if (lines.length === 0) return [{ kind: "empty" }]
+  return lines.map((line) => ({
+    kind: "line",
+    line,
+    compareValue: compareMap
+      ? compareMap.get(line.id ?? line.label) ?? null
+      : undefined,
+  }))
+}
+
+function BandRow({ label, span }: { label: string; span: number }) {
   return (
-    <dl className="divide-y divide-border/60">
-      {lines.map((line, index) => (
-        <div
-          key={line.id ?? `${line.label}-${index}`}
-          className="flex items-baseline justify-between gap-4 py-2"
-        >
-          <dt className="text-sm">
-            {line.label}
-            {line.note ? (
-              <span className="block text-xs text-muted-foreground">
-                {line.note}
-              </span>
-            ) : null}
-          </dt>
-          <dd className="flex items-center gap-2 text-sm tabular-nums">
-            {compare ? (
-              <span className="text-muted-foreground">
-                {compare.has(line.id ?? line.label)
-                  ? formatCurrency(compare.get(line.id ?? line.label) as number)
-                  : "—"}
-              </span>
-            ) : null}
-            {formatCurrency(line.amount)}
-            {line.source === "manual" && line.id ? (
-              <span className="flex items-center gap-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => onEdit(line.id as string)}
-                  aria-label={`Edit ${line.label}`}
-                >
-                  <Pencil />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => onDelete(line.id as string)}
-                  aria-label={`Delete ${line.label}`}
-                >
-                  <Trash2 />
-                </Button>
-              </span>
-            ) : null}
-          </dd>
-        </div>
-      ))}
-    </dl>
+    <tr>
+      <td
+        colSpan={span}
+        className="border border-border bg-muted px-3 py-1.5 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground"
+      >
+        {label}
+      </td>
+    </tr>
   )
 }
 
-function Subtotal({
+function EmptyRow({ span }: { span: number }) {
+  return (
+    <tr>
+      <td
+        colSpan={span}
+        className="border border-border px-3 py-2 text-sm text-muted-foreground"
+      >
+        None recorded.
+      </td>
+    </tr>
+  )
+}
+
+function DataRow({
+  line,
+  compare,
+  compareValue,
+  striped,
+  onEdit,
+  onDelete,
+}: {
+  line: BalanceSheetLine
+  compare: boolean
+  compareValue?: number | null
+  striped: boolean
+  onEdit: (id: string) => void
+  onDelete: (id: string) => void
+}) {
+  return (
+    <tr className={cn(striped && "bg-muted/30")}>
+      <td className="border border-border px-3 py-2 align-top text-sm">
+        {line.label}
+        {line.note ? (
+          <span className="block text-xs text-muted-foreground">{line.note}</span>
+        ) : null}
+      </td>
+      {compare ? (
+        <td className="border border-border px-3 py-2 text-right align-top text-sm tabular-nums text-muted-foreground">
+          {typeof compareValue === "number" ? formatCurrency(compareValue) : "—"}
+        </td>
+      ) : null}
+      <td className="border border-border px-3 py-2 text-right align-top text-sm tabular-nums">
+        <span className="flex items-center justify-end gap-2">
+          {formatCurrency(line.amount)}
+          {line.source === "manual" && line.id ? (
+            <span className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => onEdit(line.id as string)}
+                aria-label={`Edit ${line.label}`}
+              >
+                <Pencil />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => onDelete(line.id as string)}
+                aria-label={`Delete ${line.label}`}
+              >
+                <Trash2 />
+              </Button>
+            </span>
+          ) : null}
+        </span>
+      </td>
+    </tr>
+  )
+}
+
+function TotalRow({
   label,
   amount,
+  compare,
   compareAmount,
+  emphasis,
 }: {
   label: string
   amount: number
+  compare: boolean
   compareAmount?: number
+  emphasis: "subtotal" | "grand"
 }) {
   const hasCompare = typeof compareAmount === "number"
   const delta = hasCompare ? amount - compareAmount : 0
   return (
-    <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-2 text-sm font-medium">
-      <span>{label}</span>
-      <span className="flex items-center gap-2 tabular-nums">
-        {hasCompare ? (
-          <span className="font-normal text-muted-foreground">
-            {formatCurrency(compareAmount)}
-          </span>
-        ) : null}
-        {formatCurrency(amount)}
-        {hasCompare ? (
-          <span
-            className={cn(
-              "text-xs font-normal",
-              delta >= 0 ? "text-emerald-600" : "text-rose-600"
-            )}
-          >
-            {delta >= 0 ? "+" : ""}
-            {formatCurrency(delta)}
-          </span>
-        ) : null}
-      </span>
-    </div>
+    <tr
+      className={cn(
+        emphasis === "grand"
+          ? "border-t-2 border-t-accent bg-muted/60 font-semibold"
+          : "bg-muted/50 font-medium"
+      )}
+    >
+      <td className="border border-border px-3 py-2">{label}</td>
+      {compare ? (
+        <td className="border border-border px-3 py-2 text-right font-normal tabular-nums text-muted-foreground">
+          {hasCompare ? formatCurrency(compareAmount) : "—"}
+        </td>
+      ) : null}
+      <td className="border border-border px-3 py-2 text-right tabular-nums">
+        <span className="flex items-center justify-end gap-2">
+          {formatCurrency(amount)}
+          {hasCompare ? (
+            <span
+              className={cn(
+                "text-xs font-normal",
+                delta >= 0 ? "text-emerald-600" : "text-rose-600"
+              )}
+            >
+              {delta >= 0 ? "+" : ""}
+              {formatCurrency(delta)}
+            </span>
+          ) : null}
+        </span>
+      </td>
+    </tr>
+  )
+}
+
+// Renders one side of the balance sheet as a bordered grid. A running counter
+// stripes only data rows so band/total rows never break the zebra rhythm.
+function SideTable({
+  title,
+  rows,
+  compare,
+  currentLabel,
+  compareLabel,
+  onEdit,
+  onDelete,
+}: {
+  title: string
+  rows: StatementRow[]
+  compare: boolean
+  currentLabel: string
+  compareLabel: string
+  onEdit: (id: string) => void
+  onDelete: (id: string) => void
+}) {
+  const span = compare ? 3 : 2
+  return (
+    <section className="space-y-3 rounded-2xl border border-border/80 bg-card p-6 shadow-sm">
+      <h3 className="text-lg font-semibold">{title}</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse border border-border text-sm">
+          <thead>
+            <tr className="bg-muted text-xs uppercase tracking-[0.14em] text-muted-foreground">
+              <th className="border border-border px-3 py-2 text-left font-medium">
+                Description
+              </th>
+              {compare ? (
+                <th className="border border-border px-3 py-2 text-right font-medium">
+                  {compareLabel}
+                </th>
+              ) : null}
+              <th className="border border-border px-3 py-2 text-right font-medium">
+                {currentLabel}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => {
+              if (row.kind === "band") {
+                return <BandRow key={`band-${index}`} label={row.label} span={span} />
+              }
+              if (row.kind === "empty") {
+                return <EmptyRow key={`empty-${index}`} span={span} />
+              }
+              if (row.kind === "line") {
+                // Stripe by ordinal among data rows only, so band/total rows
+                // never break the zebra rhythm (no mutable render counter).
+                const striped =
+                  rows.slice(0, index).filter((r) => r.kind === "line").length %
+                    2 ===
+                  1
+                return (
+                  <DataRow
+                    key={row.line.id ?? `${row.line.label}-${index}`}
+                    line={row.line}
+                    compare={compare}
+                    compareValue={row.compareValue}
+                    striped={striped}
+                    onEdit={onEdit}
+                    onDelete={onDelete}
+                  />
+                )
+              }
+              return (
+                <TotalRow
+                  key={`total-${index}`}
+                  label={row.label}
+                  amount={row.amount}
+                  compare={compare}
+                  compareAmount={row.compareAmount}
+                  emphasis={row.kind}
+                />
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   )
 }
 
@@ -537,92 +680,80 @@ export function BalanceSheetView() {
             </p>
           ) : null}
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            <section className="space-y-4 rounded-2xl border border-border/80 bg-card p-6 shadow-sm">
-              <h3 className="text-lg font-semibold">Assets</h3>
-              <div>
-                <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                  Current Assets
-                </p>
-                <LineRows
-                  lines={sheet.assets.current}
-                  compare={compareMaps?.assetsCurrent}
+          {(() => {
+            const compare = Boolean(compareSheet)
+            const currentLabel = compare ? sheet.asOf : "Amount"
+            const compareLabel = compareSheet?.asOf ?? ""
+
+            const assetRows: StatementRow[] = [
+              { kind: "band", label: "Current Assets" },
+              ...lineRowsModel(sheet.assets.current, compareMaps?.assetsCurrent),
+              { kind: "band", label: "Fixed Assets" },
+              ...lineRowsModel(sheet.assets.fixed, compareMaps?.assetsFixed),
+              {
+                kind: "grand",
+                label: "Total Assets",
+                amount: sheet.assets.total,
+                compareAmount: compareSheet?.assets.total,
+              },
+            ]
+
+            const liabilityRows: StatementRow[] = [
+              { kind: "band", label: "Current Liabilities" },
+              ...lineRowsModel(
+                sheet.liabilities.current,
+                compareMaps?.liabilitiesCurrent
+              ),
+              { kind: "band", label: "Long-term Liabilities" },
+              ...lineRowsModel(
+                sheet.liabilities.longTerm,
+                compareMaps?.liabilitiesLongTerm
+              ),
+              {
+                kind: "subtotal",
+                label: "Total Liabilities",
+                amount: sheet.liabilities.total,
+                compareAmount: compareSheet?.liabilities.total,
+              },
+              { kind: "band", label: "Equity" },
+              ...lineRowsModel(sheet.equity.lines, compareMaps?.equity),
+              {
+                kind: "subtotal",
+                label: "Total Equity",
+                amount: sheet.equity.total,
+                compareAmount: compareSheet?.equity.total,
+              },
+              {
+                kind: "grand",
+                label: "Total Liabilities + Equity",
+                amount: sheet.totalLiabilitiesAndEquity,
+                compareAmount: compareSheet?.totalLiabilitiesAndEquity,
+              },
+            ]
+
+            return (
+              <div className="grid items-start gap-4 lg:grid-cols-2">
+                <SideTable
+                  title="Assets"
+                  rows={assetRows}
+                  compare={compare}
+                  currentLabel={currentLabel}
+                  compareLabel={compareLabel}
+                  onEdit={openEdit}
+                  onDelete={handleDelete}
+                />
+                <SideTable
+                  title="Liabilities & Equity"
+                  rows={liabilityRows}
+                  compare={compare}
+                  currentLabel={currentLabel}
+                  compareLabel={compareLabel}
                   onEdit={openEdit}
                   onDelete={handleDelete}
                 />
               </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                  Fixed Assets
-                </p>
-                <LineRows
-                  lines={sheet.assets.fixed}
-                  compare={compareMaps?.assetsFixed}
-                  onEdit={openEdit}
-                  onDelete={handleDelete}
-                />
-              </div>
-              <Subtotal
-                label="Total Assets"
-                amount={sheet.assets.total}
-                compareAmount={compareSheet?.assets.total}
-              />
-            </section>
-
-            <div className="space-y-4">
-              <section className="space-y-4 rounded-2xl border border-border/80 bg-card p-6 shadow-sm">
-                <h3 className="text-lg font-semibold">Liabilities</h3>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                    Current Liabilities
-                  </p>
-                  <LineRows
-                    lines={sheet.liabilities.current}
-                    compare={compareMaps?.liabilitiesCurrent}
-                    onEdit={openEdit}
-                    onDelete={handleDelete}
-                  />
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                    Long-term Liabilities
-                  </p>
-                  <LineRows
-                    lines={sheet.liabilities.longTerm}
-                    compare={compareMaps?.liabilitiesLongTerm}
-                    onEdit={openEdit}
-                    onDelete={handleDelete}
-                  />
-                </div>
-                <Subtotal
-                  label="Total Liabilities"
-                  amount={sheet.liabilities.total}
-                  compareAmount={compareSheet?.liabilities.total}
-                />
-              </section>
-
-              <section className="space-y-4 rounded-2xl border border-border/80 bg-card p-6 shadow-sm">
-                <h3 className="text-lg font-semibold">Equity</h3>
-                <LineRows
-                  lines={sheet.equity.lines}
-                  compare={compareMaps?.equity}
-                  onEdit={openEdit}
-                  onDelete={handleDelete}
-                />
-                <Subtotal
-                  label="Total Equity"
-                  amount={sheet.equity.total}
-                  compareAmount={compareSheet?.equity.total}
-                />
-              </section>
-
-              <Subtotal
-                label="Total Liabilities + Equity"
-                amount={sheet.totalLiabilitiesAndEquity}
-                compareAmount={compareSheet?.totalLiabilitiesAndEquity}
-              />
-            </div>
-          </div>
+            )
+          })()}
         </>
       ) : (
         <section className="rounded-2xl border border-border/80 bg-card p-6 shadow-sm">
