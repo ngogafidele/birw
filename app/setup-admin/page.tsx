@@ -271,7 +271,7 @@ export default function SetupAdminPage() {
             {[
               { label: "Store", icon: Store },
               { label: "Inventory", icon: PackageCheck },
-              { label: "Reports", icon: ClipboardList },
+              { label: "Visual Reports", icon: ClipboardList },
             ].map(({ label, icon: Icon }) => (
               <div
                 key={label}

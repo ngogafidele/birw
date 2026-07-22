@@ -759,9 +759,9 @@ export default async function ReportsPage({
         <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
           {STORE_LABELS[currentStore]} Overview
         </p>
-        <h2 className="text-2xl font-semibold">Reports</h2>
+        <h2 className="text-2xl font-semibold">Visual Reports</h2>
         <p className="text-sm text-muted-foreground">
-          Reports for {STORE_LABELS[currentStore]} from {fromLabel} to{" "}
+          Visual Reports for {STORE_LABELS[currentStore]} from {fromLabel} to{" "}
           {toLabel}.
         </p>
       </div>

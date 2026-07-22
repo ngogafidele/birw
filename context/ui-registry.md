@@ -269,7 +269,7 @@ Pattern notes: The modal is read-only and admin-only. The API (`GET /api/product
 
 ---
 
-## Financial Statements
+## Financial Reports
 
 Files: `components/financial-statements/financial-statements-manager.tsx`, `income-statement-view.tsx`, `balance-sheet-view.tsx`, `app/(dashboard)/financial-statements/page.tsx`
 Last updated: 2026-07-17

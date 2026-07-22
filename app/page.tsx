@@ -67,7 +67,7 @@ export default function Home() {
       icon: ReceiptText,
     },
     {
-      label: "Reports",
+      label: "Visual Reports",
       text: "Review daily movement, receivables, and store performance.",
       icon: ChartNoAxesCombined,
     },

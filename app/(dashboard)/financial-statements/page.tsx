@@ -19,7 +19,7 @@ export default async function FinancialStatementsPage() {
         <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
           {STORE_LABELS[store]} Accounting
         </p>
-        <h2 className="text-2xl font-semibold">Financial Statements</h2>
+        <h2 className="text-2xl font-semibold">Financial Reports</h2>
         <p className="text-sm text-muted-foreground">
           Income statement and balance sheet for {STORE_LABELS[store]}.
         </p>

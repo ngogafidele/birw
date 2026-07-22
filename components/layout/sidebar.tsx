@@ -44,12 +44,12 @@ const stockAdjustmentsNavItem = {
 
 const financialStatementsNavItem = {
   href: "/financial-statements",
-  label: "Financial Statements",
+  label: "Financial Reports",
   icon: FileSpreadsheet,
 }
 
 const bottomNavItems = [
-  { href: "/reports", label: "Reports", icon: ChartColumn },
+  { href: "/reports", label: "Visual Reports", icon: ChartColumn },
 ]
 
 export function Sidebar({ session }: { session: AuthSession }) {
