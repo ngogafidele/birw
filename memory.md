@@ -1,33 +1,41 @@
-# Memory — On-Screen Financial Statement Tables
+# Memory — Feature Renames (Financial Reports & Visual Reports)
 
 Last updated: 2026-07-22
 
 ## What was built
 
-- **Income Statement on-screen table** (`components/financial-statements/income-statement-view.tsx`): replaced the `<dl>` list with a bordered `Description | Amount` grid — `bg-muted` header band, full `border-border` cell borders, `bg-muted/30` zebra on odd line rows, subtotal `bg-muted/50 font-medium`, grand-total (Net Profit) `border-t-2 border-t-accent bg-muted/60 font-semibold` keeping emerald/rose value-by-sign coloring. Amounts `text-right tabular-nums`.
-- **Balance Sheet on-screen tables** (`components/financial-statements/balance-sheet-view.tsx`): kept the two side-by-side cards (`grid items-start gap-4 lg:grid-cols-2`) but each is now ONE bordered table — **Assets** (left) and **Liabilities & Equity** (right, combining the Liabilities + Equity sections). Removed the old `LineRows`/`Subtotal` helpers; added a `StatementRow` discriminated-union row-model + `BandRow` / `EmptyRow` / `DataRow` / `TotalRow` / `SideTable` components. Sub-groups (Current/Fixed Assets, Current/Long-term Liabilities, Equity) = full-width `bg-muted` uppercase band rows; empty groups = "None recorded." cell; section closers use `subtotal` vs `grand` total styling. Preserved: comparison column (now a proper middle column headed by the compare date), per-total emerald/rose deltas inside the amount cell, inline manual-item edit/delete (`icon-xs` ghost Pencil/Trash2), balance-check banner, warnings banner, compare caption.
-- Updated `context/ui-registry.md` (Statement tables / Balance sheet layout / Comparison column rows) and `context/progress-tracker.md`.
+Display-name rename of two features (labels/headings only — no routes, folders, component names, or code identifiers changed):
+
+- **"Financial Statements" → "Financial Reports"**
+  - Sidebar nav label — `components/layout/sidebar.tsx` (`financialStatementsNavItem.label`)
+  - Page heading — `app/(dashboard)/financial-statements/page.tsx` (H2)
+  - Context docs — `context/ui-registry.md` (`## Financial Reports` heading), `context/progress-tracker.md` (3 feature-name labels: "Last documented", the section checkbox, the operational-note line)
+- **"Reports" → "Visual Reports"**
+  - Sidebar nav label — `components/layout/sidebar.tsx` (`bottomNavItems`)
+  - Page heading + subtitle — `app/(dashboard)/reports/page.tsx` (H2 + the "Reports for {store}…" subtitle)
+  - Landing marketing card — `app/page.tsx` (feature list, ~line 70)
+  - Setup-admin preview list — `app/setup-admin/page.tsx` (~line 274)
 
 ## Decisions made
 
-- On-screen statements deliberately mirror the PDF bordered-grid look, using **theme tokens** (`bg-muted`, `border-border`, `border-t-accent`) rather than the lighter `components/ui/table.tsx` primitive — so light and dark themes both track.
-- Balance sheet kept its **two side-by-side tables** (user choice) rather than the PDF's single stacked flow; the right side merges Liabilities + Equity into one table.
-- Rendering-only: no data, routes, payloads, or statement math touched.
+- **Names only = user-visible display strings.** Routes (`/financial-statements`, `/reports`), folder names, component names (`FinancialStatementsManager`, files under `components/financial-statements/`), and code identifiers were deliberately left unchanged — no URL/bookmark breakage.
+- **Technical cross-references left as-is:** the "the Reports page" mentions in `lib/financial/*` comments and in the deep prose of `context/progress-tracker.md` (income-statement math parity notes) point at the still-named `/reports` route as a code location, so renaming them would mislead. Only human-facing feature-name labels in the docs were updated.
 
 ## Problems solved
 
-- React Compiler (`react-hooks/immutability`) **rejects a mutable render counter** — a zebra-stripe counter `let dataIndex; dataIndex += 1` inside `.map` failed lint with "Cannot reassign variable after render completes". Fixed by deriving parity without mutation: `rows.slice(0, index).filter((r) => r.kind === "line").length % 2 === 1` (so band/total rows never break the zebra rhythm). This is the standard trap in these views — they also forbid manual `useMemo`/`useCallback` for derived values and synchronous `setState` in effects.
+- None novel. Confirmed the rename surface via grep: the only user-facing occurrences of these feature names are the sidebar labels, the two page H2s + one subtitle, the landing card, the setup-admin preview, and the context docs.
 
 ## Current state
 
-- Both view files are **eslint-clean** and **tsc-clean**. `npm run build` was NOT run; no live app run; nothing committed — working tree has the two view files + the two context docs uncommitted.
-- `npx tsc --noEmit` surfaces **pre-existing, unrelated** Mongoose-typing errors in API routes (`app/api/products/[id]/receipts/route.ts`, `app/api/sales/[id]/payments/route.ts`, `app/api/sales/[id]/route.ts`) — not introduced this session, left alone.
+- All edits applied. Pure string-literal swaps.
+- `npm run lint` run: the single error (`components/products/product-monitor-dialog.tsx:195` set-state-in-effect) and all 37 warnings are **pre-existing and in files not touched this session**. None of the edited files produced lint problems.
+- `npm run build` NOT run. Nothing committed — working tree has the rename edits uncommitted (plus this `memory.md`).
 
 ## Next session starts with
 
-- If wanted: run `npm run build` (may need network for font fetching) and/or commit the working-tree changes. User was asked and had not yet answered.
+- User was asked whether to run `npm run build` and/or commit the rename edits — had not yet answered. Do that if they confirm.
 
 ## Open questions
 
-- Build + commit pending user go-ahead.
-- Still open from the prior session (unchanged): whether to unify the three inventory-valuation sites (Reports/Dashboard live last-in `costPrice` vs Balance Sheet as-of WAC reconstruction) — needs `/architect`; and whether removing the retail "Inventory Value" card from the report PDF matched intent (offered to revert to screen-only).
+- Build + commit of the renames pending user go-ahead.
+- Still open from prior sessions (unchanged): whether to unify the three inventory-valuation sites (Reports/Dashboard live last-in `costPrice` vs Balance Sheet as-of WAC reconstruction) — needs `/architect`; and whether removing the retail "Inventory Value" card from the report PDF matched intent (revert-to-screen-only was offered).
